@@ -42,7 +42,7 @@ const markdownPlugin = {
         }
       }
 
-      const serialized = await save(db);
+      const serialized = save(db);
       return `export default ${JSON.stringify(serialized)};`;
     }
   },

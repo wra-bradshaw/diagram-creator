@@ -1,48 +1,24 @@
 import express from "express";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "diagram-creator-mcp-server-node";
+import { randomUUID } from "crypto";
 
 async function main() {
   const app = express();
   const server = await createMcpServer();
-  const transports = new Map<string, SSEServerTransport>();
 
-  app.get("/sse", async (req, res) => {
-    console.log("New SSE connection");
-    const transport = new SSEServerTransport("/messages", res);
-    
-    await server.connect(transport);
-    
-    // @ts-ignore - Assuming sessionId exists on transport or we need a way to identify it
-    // If it's private, we might need a workaround or verify SDK version
-    const sessionId = (transport as any).sessionId;
-    
-    if (sessionId) {
-      transports.set(sessionId, transport);
-    } else {
-        console.error("No session ID generated for transport");
-    }
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
 
-    req.on("close", () => {
-      console.log("SSE connection closed");
-      if (sessionId) {
-        transports.delete(sessionId);
-      }
-      // Clean up if necessary
-    });
+  await server.connect(transport);
+
+  app.post("/sse", async (req, res) => {
+    await transport.handleRequest(req, res);
   });
 
   app.post("/messages", async (req, res) => {
-    const sessionId = req.query.sessionId as string;
-    console.log(`Received message for session ${sessionId}`);
-    
-    const transport = transports.get(sessionId);
-    if (!transport) {
-      res.status(404).send("Session not found");
-      return;
-    }
-
-    await transport.handlePostMessage(req, res);
+    await transport.handleRequest(req, res);
   });
 
   const port = process.env.PORT || 3000;
