@@ -1,8 +1,13 @@
 {
   description = "An empty flake template that you can adapt to your own environment";
 
-  # Flake inputs
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable"; # Stable Nixpkgs (use 0.1 for unstable)
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable"; # Stable Nixpkgs (use 0.1 for unstable)
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   # Flake outputs
   outputs =
@@ -25,6 +30,7 @@
             # Provides a system-specific, configured Nixpkgs
             pkgs = import inputs.nixpkgs {
               inherit system;
+              overlays = [ inputs.fenix.overlays.default ];
               # Enable using unfree packages
               config.allowUnfree = true;
             };
@@ -42,18 +48,35 @@
         { pkgs, system }:
         {
           # Run `nix develop` to activate this environment or `direnv allow` if you have direnv installed
-          default = pkgs.mkShellNoCC {
+          default = pkgs.mkShell {
             # The Nix packages provided in the environment
-            packages = with pkgs; [
-              # Add the flake's formatter to your project's environment
-              self.formatter.${system}
-              nodejs
-              bun
-              typst
-            ];
-
-            # Set any environment variables for your development environment
-            env = { };
+            nativeBuildInputs =
+              with pkgs;
+              [
+                # Add the flake's formatter to your project's environment
+                self.formatter.${system}
+                nodejs
+                (fenix.combine [
+                  (fenix.complete.withComponents [
+                    "cargo"
+                    "clippy"
+                    "rust-src"
+                    "rustc"
+                    "rustfmt"
+                  ])
+                  fenix.targets.wasm32-unknown-unknown.latest.rust-std
+                ])
+                bun
+                wasm-pack
+                wasm-bindgen-cli
+                pkg-config
+                libiconv
+                wasm-tools
+                wabt
+              ]
+              ++ (lib.optionals stdenv.isDarwin [
+                apple-sdk
+              ]);
 
             # Add any shell logic you want executed when the environment is activated
             shellHook = "";
