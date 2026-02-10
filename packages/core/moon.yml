@@ -1,0 +1,38 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# Core package - used by many other packages in the monorepo
+
+language: typescript
+type: library
+
+# Extend global tasks with project-specific settings
+tasks:
+  build:
+    command: 'tsdown'
+    description: 'Build the core package using tsdown'
+    deps: []
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  dev:
+    command: 'tsdown --watch'
+    description: 'Watch mode for core package'
+    inputs:
+      - 'src/**/*'
+    options:
+      cache: false
+      persistent: true
+
+  test:
+    command: 'vitest'
+    description: 'Run tests for core package'
+    inputs:
+      - 'src/**/*'
+      - 'tests/**/*'
+    options:
+      cache: true

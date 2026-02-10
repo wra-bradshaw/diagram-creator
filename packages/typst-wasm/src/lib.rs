@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{
-    OnceLock, RwLock,
-    atomic::{AtomicI32, AtomicU32, Ordering},
-};
+use std::sync::RwLock;
 
+use js_sys::{Date, Uint8Array};
 use serde::{Deserialize, Serialize};
-use typst::diag::{FileError, FileResult, SourceDiagnostic, eco_format};
+use tsify::Tsify;
+use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic, Warned, eco_format};
 use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Source, VirtualPath};
 use typst::text::{Font, FontBook};
@@ -13,148 +12,27 @@ use typst::utils::LazyHash;
 use typst::{Library, World};
 use wasm_bindgen::prelude::*;
 
-const STATUS_PENDING: u32 = 1;
-const STATUS_READY: u32 = 2;
-const STATUS_ERROR: u32 = 3;
-
-const REQUEST_KIND_FILE: u32 = 3;
-const BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-const WAIT_TIMEOUT_MS: f64 = 30000.0; // 30 second timeout for resource requests
-
-#[link(wasm_import_module = "bridge")]
-unsafe extern "C" {
-    fn notify_host();
-}
-
-#[repr(C)]
-pub struct ResourceRequest {
-    signal: AtomicI32,       // offset 0
-    status: AtomicU32,       // offset 4
-    request_kind: u32,       // offset 8
-    path_len: u32,           // offset 12
-    path_data: [u8; 1024],   // offset 16
-    result_len: u32,         // offset 1040
-    error_code: u32,         // offset 1044
-    data: [u8; BUFFER_SIZE], // offset 1048
-}
-
-// Thread-safe global storage for the bridge pointer using OnceLock
-static BRIDGE: OnceLock<*mut ResourceRequest> = OnceLock::new();
-
-// Safety: The pointer is only written once during init_bridge and read thereafter.
-// The ResourceRequest uses atomic operations for thread-safe access.
-unsafe impl Send for ResourceRequestWrapper {}
-unsafe impl Sync for ResourceRequestWrapper {}
-struct ResourceRequestWrapper(*mut ResourceRequest);
-
 #[wasm_bindgen]
-pub fn init_bridge() -> *mut ResourceRequest {
-    let request = Box::new(ResourceRequest {
-        signal: AtomicI32::new(0),
-        status: AtomicU32::new(STATUS_READY), // Start as READY (idle)
-        request_kind: 0,
-        path_len: 0,
-        path_data: [0; 1024],
-        result_len: 0,
-        error_code: 0,
-        data: [0; BUFFER_SIZE],
-    });
-    let ptr = Box::into_raw(request);
-    let _ = BRIDGE.set(ptr);
-    ptr
+unsafe extern "C" {
+    #[wasm_bindgen(catch)]
+    fn web_fetch(path: &str) -> Result<JsValue, JsValue>;
 }
 
 pub struct ResourceBridge;
 
 impl ResourceBridge {
-    fn request_ptr() -> Result<*mut ResourceRequest, String> {
-        BRIDGE
-            .get()
-            .copied()
-            .ok_or_else(|| "Bridge not initialized".to_string())
-    }
-
     pub fn request_file(path: &str) -> Result<Vec<u8>, String> {
-        let ptr = Self::request_ptr()?;
-        // Safety: The pointer is valid as it was created via Box::into_raw in init_bridge
-        // and the ResourceRequest uses atomic operations for thread-safe field access.
-        let request = unsafe { &mut *ptr };
-
-        let path_bytes = path.as_bytes();
-        if path_bytes.len() > 1024 {
-            return Err("Path too long".to_string());
-        }
-
-        request.path_data[..path_bytes.len()].copy_from_slice(path_bytes);
-        request.path_len = path_bytes.len() as u32;
-        request.request_kind = REQUEST_KIND_FILE;
-
-        request
-            .signal
-            .store(STATUS_PENDING as i32, Ordering::Release);
-        request.status.store(STATUS_PENDING, Ordering::Release);
-
-        unsafe {
-            notify_host();
-        }
-
-        let memory = wasm_bindgen::memory();
-        let buffer = js_sys::Reflect::get(&memory, &JsValue::from_str("buffer"))
-            .map_err(|_| "Failed to get memory buffer".to_string())?;
-        let view = js_sys::Int32Array::new(&buffer);
-
-        // Calculate index of signal in Int32Array
-        // signal is at offset 0 relative to struct.
-        // We need ptr / 4 to get Int32 index
-        let ptr_val = ptr as u32;
-        let signal_idx = ptr_val / 4;
-
-        loop {
-            // Use timeout to prevent infinite blocking
-            match js_sys::Atomics::wait_with_timeout(
-                &view,
-                signal_idx,
-                STATUS_PENDING as i32,
-                WAIT_TIMEOUT_MS,
-            ) {
-                Ok(result) => {
-                    // Check if we timed out
-                    let result_str = result.as_string().unwrap_or_default();
-                    if result_str == "timed-out" {
-                        return Err(format!(
-                            "Resource request timed out after {}ms: {}",
-                            WAIT_TIMEOUT_MS, path
-                        ));
-                    }
-                }
-                Err(_) => return Err("Atomics wait failed".to_string()),
+        match web_fetch(path) {
+            Ok(value) => {
+                // Convert JsValue (Uint8Array) to Vec<u8>
+                let arr = Uint8Array::from(value);
+                let data = arr.to_vec();
+                Ok(data)
             }
-
-            let status = request.status.load(Ordering::Acquire);
-            if status != STATUS_PENDING {
-                break;
-            }
+            Err(err) => Err(err
+                .as_string()
+                .unwrap_or_else(|| "Unknown error".to_string())),
         }
-
-        let status = request.status.load(Ordering::Acquire);
-        if status == STATUS_ERROR {
-            return Err(format!(
-                "Resource fetch error (code {}): {}",
-                request.error_code, path
-            ));
-        }
-
-        let len = request.result_len as usize;
-        if len > BUFFER_SIZE {
-            return Err(format!(
-                "Result too large for buffer ({} > {})",
-                len, BUFFER_SIZE
-            ));
-        }
-
-        // Copy from data buffer
-        let data = &request.data[..len];
-        Ok(data.to_vec())
     }
 }
 
@@ -215,27 +93,37 @@ impl TypstCompiler {
         self.main_id = Some(id);
     }
 
-    pub fn compile(&mut self) -> Result<String, JsValue> {
-        let _main_id = self
-            .main_id
-            .ok_or_else(|| JsValue::from_str("Main file not set"))?;
-
+    pub fn compile(&mut self) -> CompileOutput {
         let result = typst::compile(self);
+        let diagnostics = format_diagnostics(self, &result);
+        let success = result.output.is_ok();
 
-        match result.output {
+        let output = match result.output {
             Ok(document) => {
                 let svg = typst_svg::svg_merged(&document, Default::default());
-                Ok(svg)
+                CompileOutput {
+                    success,
+                    svg: Some(svg),
+                    diagnostics,
+                }
             }
-            Err(errors) => {
-                let diagnostics: Vec<WasmDiagnostic> = errors
-                    .iter()
-                    .map(|err| WasmDiagnostic::from_source_diagnostic(err, self))
-                    .collect();
-                Err(serde_wasm_bindgen::to_value(&diagnostics)?)
-            }
-        }
+            Err(_) => CompileOutput {
+                success,
+                svg: None,
+                diagnostics,
+            },
+        };
+
+        output
     }
+}
+
+#[derive(Tsify, Serialize, Deserialize)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+pub struct CompileOutput {
+    pub success: bool,
+    pub svg: Option<String>,
+    pub diagnostics: Vec<WasmDiagnostic>,
 }
 
 impl World for TypstCompiler {
@@ -313,23 +201,43 @@ impl World for TypstCompiler {
     }
 
     /// Returns the current date.
-    /// Note: Currently returns a fixed date (1970-01-01) as the WASM environment
-    /// doesn't have direct access to the system clock. For accurate dates,
-    /// pass the date from the host environment.
-    fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
-        // TODO: Accept date from host via the bridge
-        Datetime::from_ymd(1970, 1, 1)
+    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
+        let date = Date::new_0();
+
+        let (year, month, day) = if let Some(offset) = offset {
+            let offset_ms = (offset as f64) * 60.0 * 60.0 * 1000.0;
+            let time = date.get_time() + offset_ms;
+            let date = Date::new(&JsValue::from_f64(time));
+            (
+                date.get_utc_full_year() as i32,
+                (date.get_utc_month() + 1) as u8,
+                date.get_utc_date() as u8,
+            )
+        } else {
+            (
+                date.get_full_year() as i32,
+                (date.get_month() + 1) as u8,
+                date.get_date() as u8,
+            )
+        };
+
+        Datetime::from_ymd(year, month, day)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Tsify, Serialize, Deserialize)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
 pub struct WasmDiagnostic {
     pub message: String,
     pub severity: String,
-    pub start: Option<usize>,
-    pub end: Option<usize>,
+    pub file: Option<String>,
     pub line: Option<usize>,
     pub column: Option<usize>,
+    pub start: Option<usize>,
+    pub end: Option<usize>,
+    pub formatted: String,
+    pub hints: Vec<String>,
+    pub trace: Vec<String>,
 }
 
 impl WasmDiagnostic {
@@ -338,25 +246,159 @@ impl WasmDiagnostic {
         let mut column = None;
         let mut start = None;
         let mut end = None;
+        let mut file = None;
 
         if let Some(span) = diag.span.id() {
             if let Some(source) = world.source(span).ok() {
                 if let Some(range) = source.range(diag.span) {
                     start = Some(range.start);
                     end = Some(range.end);
-                    line = Some(source.byte_to_line(range.start).unwrap_or(0));
-                    column = Some(source.byte_to_column(range.start).unwrap_or(0));
+                    line = Some(source.byte_to_line(range.start).unwrap_or(0) + 1);
+                    column = Some(source.byte_to_column(range.start).unwrap_or(0) + 1);
                 }
             }
+            file = Some(span.vpath().as_rooted_path().display().to_string());
         }
+
+        let severity = match diag.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+
+        let hints: Vec<String> = diag.hints.iter().map(|h| h.to_string()).collect();
+
+        let trace: Vec<String> = diag
+            .trace
+            .iter()
+            .filter_map(|t| {
+                let span = t.span;
+                if let Some(file_id) = span.id() {
+                    if let Some(source) = world.source(file_id).ok() {
+                        if let Some(range) = source.range(span) {
+                            let line_num = source.byte_to_line(range.start).unwrap_or(0) + 1;
+                            let file_name = file_id.vpath().as_rooted_path().display().to_string();
+                            return Some(format!("{} ({}:{})", t.v, file_name, line_num));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        let formatted = format_single_diagnostic(world, diag);
 
         Self {
             message: diag.message.to_string(),
-            severity: format!("{:?}", diag.severity).to_lowercase(),
-            start,
-            end,
+            severity: severity.to_string(),
+            file,
             line,
             column,
+            start,
+            end,
+            formatted,
+            hints,
+            trace,
         }
     }
+}
+
+/// Formats all diagnostics (warnings + errors) from a compilation result.
+pub fn format_diagnostics<T>(
+    world: &dyn World,
+    result: &Warned<Result<T, typst::ecow::EcoVec<SourceDiagnostic>>>,
+) -> Vec<WasmDiagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // Warnings exist even when compilation succeeds
+    for warning in &result.warnings {
+        diagnostics.push(WasmDiagnostic::from_source_diagnostic(warning, world));
+    }
+
+    // Errors only if compilation failed
+    if let Err(errors) = &result.output {
+        for error in errors {
+            diagnostics.push(WasmDiagnostic::from_source_diagnostic(error, world));
+        }
+    }
+
+    diagnostics
+}
+
+/// Formats a single diagnostic into a human-readable string with caret underlines.
+fn format_single_diagnostic(world: &dyn World, diag: &SourceDiagnostic) -> String {
+    let severity = match diag.severity {
+        Severity::Error => "ERROR",
+        Severity::Warning => "WARNING",
+    };
+
+    let mut lines = vec![format!("{}: {}", severity, diag.message)];
+
+    // Location and source snippet
+    if let Some((file, line_num, col, source_text, highlight_len)) = extract_location(world, diag) {
+        lines.push(format!("  --> {}:{}:{}", file, line_num, col));
+        lines.push("   |".to_string());
+
+        // Source line with line number (right-aligned to 3 digits)
+        lines.push(format!("{:>3} | {}", line_num, source_text));
+
+        // Caret underline pointing to the error
+        let padding = " ".repeat(3 + 3 + col.saturating_sub(1)); // indent + "| " + column
+        let underline = "^".repeat(highlight_len.max(1));
+        lines.push(format!("{}| {}{}", "   ", padding, underline));
+
+        lines.push("   |".to_string());
+    }
+
+    // Hints as structured notes
+    for hint in &diag.hints {
+        lines.push(format!("   = hint: {}", hint));
+    }
+
+    // Optional: include trace for function calls
+    if !diag.trace.is_empty() {
+        lines.push("   = trace:".to_string());
+        for (i, trace) in diag.trace.iter().enumerate() {
+            let span = trace.span;
+            if let Some((file, line)) = span_to_location(world, span) {
+                lines.push(format!("       {}. {} ({}:{})", i + 1, trace.v, file, line));
+            }
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn extract_location(
+    world: &dyn World,
+    diag: &SourceDiagnostic,
+) -> Option<(String, usize, usize, String, usize)> {
+    let file_id = diag.span.id()?;
+    let source = world.source(file_id).ok()?;
+    let range = source.range(diag.span)?;
+
+    let line_idx = source.byte_to_line(range.start)?;
+    let line_num = line_idx + 1;
+    let col = source.byte_to_column(range.start)? + 1;
+    let file = file_id.vpath().as_rooted_path().display().to_string();
+
+    let line_range = source.line_to_range(line_idx)?;
+    let line_text = source.get(line_range)?;
+
+    // Convert tabs to 4 spaces so caret aligns correctly in browsers/terminals
+    let display_text = line_text.replace('\t', "    ");
+    let tab_before = line_text[..col.saturating_sub(1)].matches('\t').count();
+    let visual_col = col + (tab_before * 3); // adjust for tab expansion
+
+    let len = range.end.saturating_sub(range.start);
+
+    Some((file, line_num, visual_col, display_text, len))
+}
+
+fn span_to_location(world: &dyn World, span: typst::syntax::Span) -> Option<(String, usize)> {
+    let file_id = span.id()?;
+    let source = world.source(file_id).ok()?;
+    let range = source.range(span)?;
+    let line = source.byte_to_line(range.start)? + 1;
+    let file = file_id.vpath().as_rooted_path().display().to_string();
+    Some((file, line))
 }

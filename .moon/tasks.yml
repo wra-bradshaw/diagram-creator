@@ -1,0 +1,74 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Define file groups to group files together for caching and hashing.
+fileGroups:
+  # List of files to hash that affect the build outcome.
+  build:
+    - 'src/**/*'
+    - 'package.json'
+    - 'tsconfig.json'
+  # List of files to hash that affect the test outcome.
+  test:
+    - 'src/**/*'
+    - 'tests/**/*'
+    - 'package.json'
+  # List of files to hash that affect the lint outcome.
+  lint:
+    - 'src/**/*'
+    - 'package.json'
+
+# Define global tasks that can be inherited by all projects.
+tasks:
+  # Build task
+  build:
+    command: 'bun run build'
+    description: 'Build the project'
+    deps:
+      - '^:build'  # Depends on build tasks from dependent projects
+    inputs:
+      - '@group(build)'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+      runDepsInParallel: false
+
+  # Development task
+  dev:
+    command: 'bun run dev'
+    description: 'Run the project in development mode'
+    deps:
+      - '^:build'  # Depends on build tasks from dependent projects
+    inputs:
+      - '@group(build)'
+    options:
+      cache: false
+      runInCI: false
+      persistent: true
+
+  # Test task
+  test:
+    command: 'bun run test'
+    description: 'Run tests for the project'
+    inputs:
+      - '@group(test)'
+    options:
+      cache: true
+
+  # Lint task
+  lint:
+    command: 'bun run lint'
+    description: 'Lint the project'
+    inputs:
+      - '@group(build)'
+    options:
+      cache: true
+
+  # Typecheck task
+  typecheck:
+    command: 'bun run tsc --noEmit'
+    description: 'Typecheck the project'
+    inputs:
+      - '@group(build)'
+    options:
+      cache: true

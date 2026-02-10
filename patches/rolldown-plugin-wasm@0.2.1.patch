@@ -1,0 +1,13 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 99b551f8af1c240e2464c932259755be7b6c3f76..74874871b045e04c042c48da3d4457ea4fea369c 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -19,7 +19,7 @@ const { Buffer } = process.getBuiltinModule('buffer')
+ buf = Buffer.from(src, 'base64')
+ `;
+ const browserFilePath = `
+-return instantiate(fetch(filepath), imports, true);
++return instantiate(fetch(new URL(filepath, import.meta.url)), imports, true);
+ `;
+ const browserDecode = `
+ const raw = globalThis.atob(src)

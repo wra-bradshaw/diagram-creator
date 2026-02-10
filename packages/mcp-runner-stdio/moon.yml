@@ -1,0 +1,46 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# MCP Runner STDIO package
+
+language: typescript
+type: application
+
+dependsOn:
+  - 'core'
+  - 'mcp-common'
+
+tasks:
+  build:
+    command: 'tsdown'
+    description: 'Build MCP runner STDIO package'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  dev:
+    command: 'tsdown --watch'
+    description: 'Watch mode for MCP runner STDIO'
+    deps:
+      - 'core:build'
+      - 'mcp-common:build'
+    inputs:
+      - 'src/**/*'
+    options:
+      cache: false
+      persistent: true
+
+  start:
+    command: 'node dist/index.mjs'
+    description: 'Start the MCP runner STDIO server'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: false
+      persistent: true

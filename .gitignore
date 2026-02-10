@@ -53,3 +53,13 @@ coverage
 count.txt
 todos.json
 package-lock.json
+
+# Moonrepo
+.moon/cache
+.moon/docker
+.moon/toolchain-state.json
+
+# Large binary files (WASM, fonts) - exclude from git tracking
+*.wasm
+*.otf
+*.ttf

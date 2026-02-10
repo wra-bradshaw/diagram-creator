@@ -1,0 +1,30 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# Server A2A package
+
+language: typescript
+type: application
+
+tasks:
+  build:
+    command: 'tsc'
+    description: 'Build server A2A package using TypeScript compiler'
+    deps: []
+    inputs:
+      - 'src/**/*'
+      - 'tsconfig.json'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  start:
+    command: 'node dist/index.js'
+    description: 'Start the A2A server'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: false
+      persistent: true

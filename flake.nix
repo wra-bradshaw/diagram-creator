@@ -73,6 +73,8 @@
                 libiconv
                 wasm-tools
                 wabt
+                moon
+                gnutar
               ]
               ++ (lib.optionals stdenv.isDarwin [
                 apple-sdk

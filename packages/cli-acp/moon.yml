@@ -1,0 +1,23 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# Inherit all default tasks from the workspace.
+# The tasks defined here extend and override the global tasks.
+
+language: typescript
+type: library
+
+# Override or extend tasks specific to this project
+tasks:
+  build:
+    command: 'tsc'
+    description: 'Build the CLI ACP package using TypeScript compiler'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'tsconfig.json'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true

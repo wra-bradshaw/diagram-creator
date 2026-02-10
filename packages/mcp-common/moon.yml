@@ -1,0 +1,34 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# MCP Common package - shared utilities for MCP servers
+
+language: typescript
+type: library
+
+dependsOn:
+  - 'core'
+
+tasks:
+  build:
+    command: 'tsdown'
+    description: 'Build MCP common package'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  dev:
+    command: 'tsdown --watch'
+    description: 'Watch mode for MCP common'
+    deps:
+      - 'core:build'
+    inputs:
+      - 'src/**/*'
+    options:
+      cache: false
+      persistent: true

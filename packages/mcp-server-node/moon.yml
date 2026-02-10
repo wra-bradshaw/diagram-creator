@@ -1,0 +1,38 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# MCP Server Node package
+
+language: typescript
+type: tool
+
+dependsOn:
+  - 'core'
+  - 'mcp-common'
+  - 'typst-wasm'
+
+tasks:
+  build:
+    command: 'tsdown'
+    description: 'Build MCP server node package'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  dev:
+    command: 'tsdown --watch'
+    description: 'Watch mode for MCP server node'
+    deps:
+      - 'core:build'
+      - 'mcp-common:build'
+      - 'typst-wasm:build'
+    inputs:
+      - 'src/**/*'
+    options:
+      cache: false
+      persistent: true

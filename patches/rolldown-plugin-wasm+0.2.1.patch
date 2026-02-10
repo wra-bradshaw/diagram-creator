@@ -1,0 +1,13 @@
+diff --git a/node_modules/rolldown-plugin-wasm/dist/index.mjs b/node_modules/rolldown-plugin-wasm/dist/index.mjs
+index abc123..def456 100644
+--- a/node_modules/rolldown-plugin-wasm/dist/index.mjs
++++ b/node_modules/rolldown-plugin-wasm/dist/index.mjs
+@@ -17,7 +17,7 @@ const nodeDecode = `
+ `
+ 
+ const browserFilePath = `
+-return instantiate(fetch(filepath), imports, true);
++return instantiate(fetch(new URL(filepath, import.meta.url)), imports, true);
+ `
+ 
+ const browserDecode = `

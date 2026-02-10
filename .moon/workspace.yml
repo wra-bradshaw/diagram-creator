@@ -1,0 +1,38 @@
+$schema: 'https://moonrepo.dev/schemas/workspace.json'
+
+# Defines the location of all projects within this workspace.
+projects:
+  - packages/*
+
+# Configures the version control system to integrate with.
+vcs:
+  defaultBranch: 'main'
+  manager: 'git'
+  remoteCandidates:
+    - 'origin'
+    - 'upstream'
+
+# Configures code generation capabilities.
+generator:
+  # Location of all template files.
+  templates:
+    - '.moon/templates'
+
+# Configures aspects of file hashing.
+hasher:
+  # The number of ignored paths to persist in each run.
+  walkStrategy: 'glob'
+
+# Configures the action (execution) pipeline.
+pipeline:
+  # Whether to automatically clean the cache.
+  autoCleanCache: true
+  # Log running commands and their state.
+  logRunningCommand: true
+  # Run the install action before executing targets.
+  installDependencies: true
+
+# Configures the orchestration layer.
+notifier:
+  # Where to deliver pipeline notifications.
+  webhookUrl: null

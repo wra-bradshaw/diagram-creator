@@ -15,22 +15,34 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./fonts": {
+      "import": {
+        "types": "./dist/fonts.d.mts",
+        "default": "./dist/fonts.mjs"
+      },
+      "require": {
+        "types": "./dist/fonts.d.cts",
+        "default": "./dist/fonts.cjs"
+      }
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build:wasm": "wasm-pack build --target web --out-dir src/wasm . -- -Z build-std=std,panic_abort",
-    "build": "bun run build:wasm && node scripts/patch_wasm_import.cjs && tsdown && cp -r src/wasm dist/wasm",
-    "dev": "tsdown --watch",
-    "prepublishOnly": "bun run build"
+    "build": "moon run build",
+    "dev": "moon run dev",
+    "prepublishOnly": "moon run prepublishOnly"
   },
   "devDependencies": {
-    "tsdown": "^0.18.2",
-    "typescript": "^5.7.2"
+    "@types/node": "^25.2.0",
+    "rolldown-plugin-wasm": "^0.2.1",
+    "tsdown": "^0.20.3",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "fflate": "^0.8.2"
+    "nanotar": "^0.2.0",
+    "tsdown-plugin-worker": "^0.1.6"
   }
 }

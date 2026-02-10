@@ -1,0 +1,92 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# Web App package - Main web application using Vite and TanStack
+
+language: typescript
+type: application
+
+dependsOn:
+  - 'core'
+  - 'typst-wasm'
+
+fileGroups:
+  vite:
+    - 'src/**/*'
+    - 'index.html'
+    - 'vite.config.*'
+    - 'package.json'
+    - 'tsconfig.json'
+    - 'public/**/*'
+
+tasks:
+  build:
+    command: 'vite build'
+    description: 'Build web app for production'
+    deps:
+      - '^:build'
+    inputs:
+      - '@group(vite)'
+    outputs:
+      - 'dist'
+      - '.output'
+    options:
+      cache: true
+
+  dev:
+    command: 'vite dev --port 3000'
+    description: 'Start web app development server'
+    deps:
+      - 'core:build'
+      - 'typst-wasm:build'
+    inputs:
+      - '@group(vite)'
+    options:
+      cache: false
+      persistent: true
+      runInCI: false
+
+  preview:
+    command: 'vite preview'
+    description: 'Preview production build'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      persistent: true
+
+  test:
+    command: 'vitest run'
+    description: 'Run tests for web app'
+    inputs:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'package.json'
+    options:
+      cache: true
+
+  lint:
+    command: 'eslint .'
+    description: 'Lint the web app codebase'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+      - '.eslintrc.*'
+    options:
+      cache: true
+
+  format:
+    command: 'prettier --write .'
+    description: 'Format the web app codebase'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+      - '.prettierrc*'
+    options:
+      cache: true
+
+  postinstall:
+    command: 'patch-package'
+    description: 'Apply patches after install'
+    options:
+      cache: false
+      runInCI: false

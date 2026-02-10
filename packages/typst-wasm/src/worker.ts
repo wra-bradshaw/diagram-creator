@@ -1,93 +1,113 @@
-import init, { init_bridge, TypstCompiler } from "./wasm/typst_wasm.js";
+import { SharedMemoryCommunication, SharedMemoryCommunicationStatus } from "./protocol";
+import { createPostMessage } from "./util.js";
+import type { MainToWorkerMessage } from "./index";
+import { TypstCompiler } from "./wasm";
+import type { WasmDiagnostic } from "./wasm";
 
-// Bridge struct offsets - must match ResourceRequest layout in lib.rs
-const OFFSET_KIND = 8;
-const OFFSET_PATH_LEN = 12;
-const OFFSET_PATH_DATA = 16;
-
-let wasmMemory: WebAssembly.Memory;
-let bridgePtr: number = 0;
-let compiler: TypstCompiler | null = null;
-
-self.onmessage = async (e: MessageEvent) => {
-    const { type, payload } = e.data;
-
-    switch (type) {
-        case 'init':
-            await initWasm(payload.wasmUrl);
-            break;
-        case 'compile':
-            if (!compiler) {
-                self.postMessage({ type: 'compiled', error: { message: "Compiler not initialized" } });
-                return;
-            }
-            try {
-                if (payload.mainPath) {
-                    compiler.set_main(payload.mainPath);
-                }
-                
-                if (payload.files) {
-                    for (const [path, data] of Object.entries(payload.files)) {
-                        compiler.add_file(path, data as Uint8Array);
-                    }
-                }
-                
-                const result = compiler.compile();
-                self.postMessage({ type: 'compiled', result });
-            } catch (err) {
-                self.postMessage({ type: 'compiled', error: err });
-            }
-            break;
-
+export type WorkerToMainMessage =
+  | {
+      kind: "compiled";
+      payload: {
+        svg: string;
+        diagnostics: WasmDiagnostic[];
+      };
     }
-};
-
-async function initWasm(wasmUrl: string) {
-    wasmMemory = new WebAssembly.Memory({
-        initial: 2048, // 128MB
-        maximum: 4096, // 256MB
-        shared: true
-    });
-
-    const imports = {
-        env: {
-            memory: wasmMemory,
-        },
-        bridge: {
-            notify_host: () => {
-                if (!bridgePtr) return;
-                
-                const view = new DataView(wasmMemory.buffer);
-                const ptr = bridgePtr;
-                
-                const kind = view.getUint32(ptr + OFFSET_KIND, true);
-                const pathLen = view.getUint32(ptr + OFFSET_PATH_LEN, true);
-                const pathBytes = new Uint8Array(wasmMemory.buffer, ptr + OFFSET_PATH_DATA, pathLen);
-                const path = new TextDecoder().decode(pathBytes);
-
-                self.postMessage({
-                    type: 'resource_request',
-                    payload: { kind, path }
-                });
-            }
-        }
+  | {
+      kind: "compile_error";
+      payload: {
+        error: string;
+        diagnostics: WasmDiagnostic[];
+      };
+    }
+  | {
+      kind: "web_fetch";
+      payload: {
+        path: string;
+      };
+    }
+  | {
+      kind: "ready";
+      payload: undefined;
     };
 
-    // @ts-expect-error - The init function accepts custom imports after patching by patch_wasm_import.cjs
-    await init(wasmUrl, imports);
-    
-    // Initialize bridge
-    bridgePtr = init_bridge();
-    
-    compiler = new TypstCompiler();
-    
-    self.postMessage({ 
-        type: 'ready',
-        payload: {
-            bridgePtr,
-            memory: wasmMemory.buffer
-        }
-    });
+let compiler: TypstCompiler | null = null;
+let sharedMemoryCommunication: SharedMemoryCommunication | null = null;
+
+const postMessage = createPostMessage<WorkerToMainMessage>();
+
+declare global {
+  function web_fetch(path: string): Uint8Array;
 }
 
+globalThis.web_fetch = (path) => {
+  if (!sharedMemoryCommunication) {
+    throw new Error("Communication buffer not initialized");
+  }
 
+  sharedMemoryCommunication.setStatus(SharedMemoryCommunicationStatus.Pending);
+  postMessage("web_fetch", {
+    path,
+  });
+
+  Atomics.wait(new Int32Array(sharedMemoryCommunication.statusBuf), 0, SharedMemoryCommunicationStatus.Pending);
+
+  const status = sharedMemoryCommunication.getStatus();
+  if (status === SharedMemoryCommunicationStatus.Error) {
+    throw new Error(`Failed to fetch: ${path}`);
+  }
+
+  return sharedMemoryCommunication.getBuffer();
+};
+
+self.onmessage = async (e: MessageEvent) => {
+  const data = e.data as MainToWorkerMessage;
+
+  switch (data.kind) {
+    case "init":
+      console.log("init received");
+      sharedMemoryCommunication = SharedMemoryCommunication.hydrateObj(data.payload.sharedMemoryCommunication);
+      console.log("creating wasm compiler...");
+      compiler = new TypstCompiler();
+      console.log("done");
+      postMessage("ready", undefined);
+
+      break;
+    case "compile":
+      if (!compiler) {
+        postMessage("compile_error", { error: "Compiler not initialised", diagnostics: [] });
+        return;
+      }
+      try {
+        compiler.set_main(data.payload.mainPath);
+
+        for (const [path, fileData] of Object.entries(data.payload.files)) {
+          compiler.add_file(path, fileData);
+        }
+
+        const result = compiler.compile();
+
+        postMessage("compiled", {
+          svg: result.svg ?? "",
+          diagnostics: result.diagnostics,
+        });
+      } catch (err) {
+        console.error(err);
+        postMessage("compile_error", {
+          error: JSON.stringify(err),
+          diagnostics: [],
+        });
+      }
+      break;
+    case "load_font":
+      if (!compiler) {
+        console.error("[Worker] Cannot load font: Compiler not initialised");
+        return;
+      }
+      try {
+        compiler.add_font(data.payload.data);
+      } catch (err) {
+        console.error("[Worker] Failed to load font:", err);
+      }
+      break;
+  }
+};

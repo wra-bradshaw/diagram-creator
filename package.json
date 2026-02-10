@@ -5,7 +5,17 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm query .workspace exec npm test",
-    "lint": "npm query .workspace exec npm run lint"
+    "test": "moon run :test",
+    "lint": "moon run :lint",
+    "build": "moon run :build",
+    "dev": "moon run :dev",
+    "moon": "moon",
+    "typecheck": "moon run :typecheck"
+  },
+  "devDependencies": {
+    "@moonrepo/cli": "^1.32.7"
+  },
+  "patchedDependencies": {
+    "rolldown-plugin-wasm@0.2.1": "patches/rolldown-plugin-wasm@0.2.1.patch"
   }
 }

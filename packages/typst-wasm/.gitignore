@@ -1,2 +1,19 @@
 src/wasm
 target
+
+# Font cache
+src/fonts/files/
+src/fonts/.url
+
+# Auto-generated font index
+src/fonts/index.ts
+
+# WASM cache (legacy, now in .moon/cache)
+.wasm-hash
+
+# Font archive temp files
+*.txz
+*.xz
+
+# Moon cache (handled by moon)
+.moon/cache

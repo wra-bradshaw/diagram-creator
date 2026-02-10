@@ -1,0 +1,36 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# MCP Runner Worker package
+
+language: typescript
+type: application
+
+dependsOn:
+  - 'core'
+  - 'mcp-common'
+
+tasks:
+  build:
+    command: 'tsdown'
+    description: 'Build MCP runner worker package'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'package.json'
+    outputs:
+      - 'dist'
+    options:
+      cache: true
+
+  dev:
+    command: 'tsdown --watch'
+    description: 'Watch mode for MCP runner worker'
+    deps:
+      - 'core:build'
+      - 'mcp-common:build'
+    inputs:
+      - 'src/**/*'
+    options:
+      cache: false
+      persistent: true
