@@ -8,7 +8,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["rolldown-plugin-wasm/types", "tsdown-plugin-worker/types"]
+    "types": ["tsdown-plugin-worker/types", "vitest/globals"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "tests/**/*"]
 }

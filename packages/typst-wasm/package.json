@@ -25,6 +25,10 @@
         "types": "./dist/fonts.d.cts",
         "default": "./dist/fonts.cjs"
       }
+    },
+    "./wasm": {
+      "import": "./dist/typst_wasm_bg.wasm",
+      "require": "./dist/typst_wasm_bg.wasm"
     }
   },
   "files": [
@@ -33,15 +37,23 @@
   "scripts": {
     "build": "moon run build",
     "dev": "moon run dev",
-    "prepublishOnly": "moon run prepublishOnly"
+    "prepublishOnly": "moon run prepublishOnly",
+    "test": "vitest run",
+    "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix"
   },
   "devDependencies": {
+    "@effect/eslint-plugin": "^0.3.2",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.2.0",
-    "rolldown-plugin-wasm": "^0.2.1",
+    "eslint": "^10.0.0",
     "tsdown": "^0.20.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.55.0",
+    "vitest": "^4.0.16"
   },
   "dependencies": {
+    "effect": "^3.19.16",
     "nanotar": "^0.2.0",
     "tsdown-plugin-worker": "^0.1.6"
   }

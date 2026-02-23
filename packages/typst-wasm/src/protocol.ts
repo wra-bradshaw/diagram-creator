@@ -1,5 +1,6 @@
 const INITIAL_SAB_SIZE = 1024 * 1024; // 1MB
-const MAX_SAB_SIZE = 4 * 1024 * 1024 * 1024; // 64GB
+const MAX_SAB_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
+const DEFAULT_FETCH_TIMEOUT = 30000; // 30 seconds
 
 export const SharedMemoryCommunicationStatus = {
   None: 0,
@@ -37,6 +38,13 @@ export class SharedMemoryCommunication {
     const needed = buf.byteLength;
     const current = this.dataBuf.byteLength;
 
+    // Validate against maximum size
+    if (needed > MAX_SAB_SIZE) {
+      throw new Error(
+        `File too large: ${needed} bytes. Maximum allowed: ${MAX_SAB_SIZE} bytes (4GB).`
+      );
+    }
+
     if (needed > current) {
       this.dataBuf.grow(needed);
     }
@@ -54,6 +62,24 @@ export class SharedMemoryCommunication {
     const sizeView = new Int32Array(this.sizeBuf);
     const size = Atomics.load(sizeView, 0);
     return new Uint8Array(this.dataBuf, 0, size);
+  }
+
+  /**
+   * Wait for status change with timeout
+   * @param expectedStatus - The status value to wait for
+   * @param timeoutMs - Timeout in milliseconds (default: 30000ms)
+   * @returns true if status changed, false if timed out
+   */
+  waitForStatusChange(
+    expectedStatus: SharedMemoryCommunicationStatus,
+    timeoutMs: number = DEFAULT_FETCH_TIMEOUT
+  ): boolean {
+    const statusView = new Int32Array(this.statusBuf);
+    
+    // Atomics.wait returns "ok" | "not-equal" | "timed-out"
+    const result = Atomics.wait(statusView, 0, expectedStatus, timeoutMs);
+    
+    return result === "ok";
   }
 
   static hydrateObj(obj: SharedMemoryCommunication) {

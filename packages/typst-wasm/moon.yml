@@ -57,7 +57,7 @@ tasks:
 
   # Task 3: Build Rust to WASM (dev mode)
   build-wasm-dev:
-    command: "wasm-pack build --dev --target bundler --out-dir src/wasm . -- -Z build-std=std,panic_abort"
+    command: "wasm-pack build --dev --target web --out-dir src/wasm . -- -Z build-std=std,panic_abort"
     description: "Build Rust to WASM (development, unoptimized)"
     inputs:
       - "@group(rust-sources)"
@@ -69,7 +69,7 @@ tasks:
 
   # Task 3b: Build Rust to WASM (release mode)
   build-wasm-release:
-    command: "wasm-pack build --dev --target bundler --out-dir src/wasm . -- -Z build-std=std,panic_abort"
+    command: "wasm-pack build --release --target web --out-dir src/wasm . -- -Z build-std=std,panic_abort"
     description: "Build Rust to WASM (release, optimized)"
     inputs:
       - "@group(rust-sources)"
@@ -90,7 +90,22 @@ tasks:
       - "@group(typescript-sources)"
       - "tsdown.config.ts"
     outputs:
-      - "dist/**/*"
+      - "dist/index.js"
+      - "dist/index.d.ts"
+      - "dist/worker.js"
+    options:
+      cache: true
+
+  # Task 5: Copy WASM file to dist
+  copy-wasm:
+    command: "cp src/wasm/typst_wasm_bg.wasm dist/typst_wasm_bg.wasm"
+    description: "Copy WASM binary to dist folder"
+    deps:
+      - "bundle"
+    inputs:
+      - "src/wasm/typst_wasm_bg.wasm"
+    outputs:
+      - "dist/typst_wasm_bg.wasm"
     options:
       cache: true
 
@@ -102,6 +117,7 @@ tasks:
       - "generate-font-index"
       - "build-wasm-release"
       - "bundle"
+      - "copy-wasm"
     options:
       cache: true
 

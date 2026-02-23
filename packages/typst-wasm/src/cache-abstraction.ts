@@ -1,7 +1,14 @@
+import { Context, Effect } from "effect";
+import { LRUCache } from "./lru-cache";
+
 export interface CacheStorage {
-  get(key: string): Promise<Uint8Array | undefined>;
-  set(key: string, value: Uint8Array | undefined): Promise<void>;
+  get(key: string): Effect.Effect<Uint8Array | null>;
+  set(key: string, value: Uint8Array): Effect.Effect<void>;
 }
+
+export class CacheStorageService extends Context.Tag("CacheStorageService")<CacheStorageService, CacheStorage>() {}
+
+const MAX_IN_MEMORY_CACHE_SIZE = 128 as const;
 
 class BrowserCacheStorage implements CacheStorage {
   private cache: Cache | null = null;
@@ -15,55 +22,68 @@ class BrowserCacheStorage implements CacheStorage {
     if (typeof caches !== "undefined") {
       try {
         this.cache = await caches.open("typst-packages");
-      } catch {
-        // Cache API not available, will remain null
+      } catch (err) {
+        console.warn("[Cache] Failed to open cache storage:", err);
       }
     }
   }
 
-  async get(key: string): Promise<Uint8Array | undefined> {
-    await this.ready;
-    if (!this.cache) return undefined;
+  get(key: string): Effect.Effect<Uint8Array | null> {
+    return Effect.gen(this, function* () {
+      yield* Effect.promise(() => this.ready).pipe(Effect.orElseSucceed(() => undefined));
+      if (!this.cache) return null;
 
-    try {
-      const response = await this.cache.match(key);
-      if (!response) return undefined;
-      return new Uint8Array(await response.arrayBuffer());
-    } catch {
-      return undefined;
-    }
+      const result = yield* Effect.promise(async () => {
+        try {
+          const response = await this.cache!.match(key);
+          if (!response) return null;
+          return new Uint8Array(await response.arrayBuffer());
+        } catch {
+          return null;
+        }
+      });
+      return result;
+    });
   }
 
-  async set(key: string, value: Uint8Array): Promise<void> {
-    await this.ready;
-    if (!this.cache) return;
+  set(key: string, value: Uint8Array): Effect.Effect<void> {
+    return Effect.gen(this, function* () {
+      yield* Effect.promise(() => this.ready).pipe(Effect.orElseSucceed(() => undefined));
+      if (!this.cache) return;
 
-    try {
-      const response = new Response(value.buffer as ArrayBuffer, {
-        headers: { "Content-Type": "application/octet-stream" },
+      yield* Effect.promise(async () => {
+        try {
+          const response = new Response(value.buffer as ArrayBuffer, {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+          await this.cache!.put(key, response);
+        } catch {
+          // Silently ignore cache write failures
+        }
       });
-      await this.cache.put(key, response);
-    } catch {
-      // Silently fail if cache write fails (e.g., quota exceeded)
-    }
+    });
   }
 }
 
 class MemoryCacheStorage implements CacheStorage {
-  private cache = new Map<string, Uint8Array>();
+  private cache: LRUCache<string, Uint8Array>;
 
-  async get(key: string): Promise<Uint8Array | undefined> {
-    return this.cache.get(key);
+  constructor(capacity: number) {
+    this.cache = new LRUCache(capacity);
   }
 
-  async set(key: string, value: Uint8Array): Promise<void> {
-    this.cache.set(key, value);
+  get(key: string): Effect.Effect<Uint8Array | null> {
+    return Effect.sync(() => this.cache.get(key) ?? null);
+  }
+
+  set(key: string, value: Uint8Array): Effect.Effect<void> {
+    return Effect.sync(() => this.cache.put(key, value));
   }
 }
 
-export function createCacheStorage(): CacheStorage {
+export function createCacheStorage(memoryCacheCapacity: number): CacheStorage {
   if (typeof caches !== "undefined") {
     return new BrowserCacheStorage();
   }
-  return new MemoryCacheStorage();
+  return new MemoryCacheStorage(memoryCacheCapacity);
 }

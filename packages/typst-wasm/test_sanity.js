@@ -1,17 +1,13 @@
-import { TypstCompiler } from "./dist/index.mjs";
-import path from "path";
+import { defaultFonts, TypstCompilerService, CompileError } from "./dist/index.js";
+import { Effect, Layer } from "effect";
 import fs from "fs";
-import { fileURLToPath } from "url";
+
+const wasmUrl = "file:///Users/will/Documents/diagram-creator-tanstack/packages/typst-wasm/dist/typst_wasm_bg.wasm";
 
 async function run() {
   try {
     console.log("Initializing compiler...");
-
-    const compiler = new TypstCompiler();
-
-    console.log("Waiting for compiler to be ready...");
-    await compiler.ready();
-    console.log("Compiler ready!");
+    console.log("WASM URL:", wasmUrl);
 
     const mainText = `
 #import "@preview/cetz:0.4.2": canvas, draw
@@ -41,26 +37,43 @@ async function run() {
 })
 `;
 
-    console.log("Compiling...");
-    const result = await compiler.compile({
-      mainPath: "main.typ",
-      files: {
-        "main.typ": new TextEncoder().encode(mainText),
-      },
+    const program = Effect.gen(function* () {
+      const compiler = yield* TypstCompilerService;
+      
+      console.log("Waiting for compiler to be ready...");
+      yield* compiler.ready;
+      console.log("Compiler ready!");
+
+      console.log("Compiling...");
+      const result = yield* compiler.compile({
+        mainPath: "main.typ",
+        files: {
+          "main.typ": new TextEncoder().encode(mainText),
+        },
+      });
+
+      console.log("Compilation Result:", result);
+
+      if (result.diagnostics && result.diagnostics.length > 0) {
+        console.error("Diagnostics:", result.diagnostics);
+      }
+
+      if (result.svg) {
+        console.log("SVG generated successfully (length: " + result.svg.length + ")");
+        fs.writeFileSync("output.svg", result.svg);
+        console.log("Wrote output.svg");
+      }
+
+      return result;
     });
 
-    console.log("Compilation Result:", result);
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.provide(TypstCompilerService.Live({ wasmUrl, fonts: defaultFonts }))
+      )
+    );
 
-    if (result.diagnostics && result.diagnostics.length > 0) {
-      console.error("Diagnostics:", result.diagnostics);
-    }
-
-    if (result.svg) {
-      console.log("SVG generated successfully (length: " + result.svg.length + ")");
-      // Write SVG to disk for inspection
-      fs.writeFileSync("output.svg", result.svg);
-      console.log("Wrote output.svg");
-    }
+    console.log("Done!");
   } catch (e) {
     console.error("Error:", e);
     process.exit(1);

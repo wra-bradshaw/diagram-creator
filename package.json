@@ -14,8 +14,5 @@
   },
   "devDependencies": {
     "@moonrepo/cli": "^1.32.7"
-  },
-  "patchedDependencies": {
-    "rolldown-plugin-wasm@0.2.1": "patches/rolldown-plugin-wasm@0.2.1.patch"
   }
 }

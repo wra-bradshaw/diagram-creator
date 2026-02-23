@@ -1,7 +1,7 @@
 import { SharedMemoryCommunication, SharedMemoryCommunicationStatus } from "./protocol";
 import { createPostMessage } from "./util.js";
 import type { MainToWorkerMessage } from "./index";
-import { TypstCompiler } from "./wasm";
+import init, { TypstCompiler } from "./wasm";
 import type { WasmDiagnostic } from "./wasm";
 
 export type WorkerToMainMessage =
@@ -49,7 +49,14 @@ globalThis.web_fetch = (path) => {
     path,
   });
 
-  Atomics.wait(new Int32Array(sharedMemoryCommunication.statusBuf), 0, SharedMemoryCommunicationStatus.Pending);
+  const changed = sharedMemoryCommunication.waitForStatusChange(
+    SharedMemoryCommunicationStatus.Pending,
+    30000  // 30 second timeout
+  );
+
+  if (!changed) {
+    throw new Error(`Timeout waiting for fetch response: ${path}`);
+  }
 
   const status = sharedMemoryCommunication.getStatus();
   if (status === SharedMemoryCommunicationStatus.Error) {
@@ -64,11 +71,13 @@ self.onmessage = async (e: MessageEvent) => {
 
   switch (data.kind) {
     case "init":
-      console.log("init received");
       sharedMemoryCommunication = SharedMemoryCommunication.hydrateObj(data.payload.sharedMemoryCommunication);
-      console.log("creating wasm compiler...");
+      try {
+        await init({ module_or_path: data.payload.wasmUrl });
+      } catch (err) {
+        console.error("Could not init", err);
+      }
       compiler = new TypstCompiler();
-      console.log("done");
       postMessage("ready", undefined);
 
       break;
@@ -80,8 +89,10 @@ self.onmessage = async (e: MessageEvent) => {
       try {
         compiler.set_main(data.payload.mainPath);
 
-        for (const [path, fileData] of Object.entries(data.payload.files)) {
-          compiler.add_file(path, fileData);
+        if (typeof data.payload.files === "object") {
+          for (const [path, fileData] of Object.entries(data.payload.files)) {
+            compiler.add_file(path, fileData);
+          }
         }
 
         const result = compiler.compile();
