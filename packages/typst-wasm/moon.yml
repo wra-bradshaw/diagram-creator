@@ -79,13 +79,40 @@ tasks:
       cache: true
       runInCI: true
 
+  patch-wasm-bindgen:
+    command: "bun run scripts/patch-wasm-bindgen.ts"
+    description: "Patch generated wasm-bindgen JS to accept custom import overrides"
+    deps:
+      - "build-wasm-release"
+    inputs:
+      - "src/wasm/typst_wasm.js"
+      - "scripts/patch-wasm-bindgen.ts"
+    outputs:
+      - "src/wasm/typst_wasm.js"
+    options:
+      cache: true
+
+  patch-wasm-bindgen-dev:
+    command: "bun run scripts/patch-wasm-bindgen.ts"
+    description: "Patch generated wasm-bindgen JS for dev builds"
+    deps:
+      - "build-wasm-dev"
+    inputs:
+      - "src/wasm/typst_wasm.js"
+      - "scripts/patch-wasm-bindgen.ts"
+    outputs:
+      - "src/wasm/typst_wasm.js"
+    options:
+      cache: true
+      runInCI: false
+
   # Task 4: Bundle TypeScript with tsdown
   bundle:
     command: "bunx tsdown"
     description: "Bundle TypeScript with tsdown"
     deps:
       - "generate-font-index"
-      - "build-wasm-release"
+      - "patch-wasm-bindgen"
     inputs:
       - "@group(typescript-sources)"
       - "tsdown.config.ts"
@@ -115,7 +142,7 @@ tasks:
     deps:
       - "fetch-fonts"
       - "generate-font-index"
-      - "build-wasm-release"
+      - "patch-wasm-bindgen"
       - "bundle"
       - "copy-wasm"
     options:
@@ -128,7 +155,7 @@ tasks:
     deps:
       - "fetch-fonts"
       - "generate-font-index"
-      - "build-wasm-dev"
+      - "patch-wasm-bindgen-dev"
     inputs:
       - "src/*"
     options:

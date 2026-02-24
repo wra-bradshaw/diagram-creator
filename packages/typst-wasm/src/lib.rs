@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use js_sys::{Date, Uint8Array};
+use js_sys::Date;
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic, Warned, eco_format};
@@ -12,27 +12,30 @@ use typst::utils::LazyHash;
 use typst::{Library, World};
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
+#[link(wasm_import_module = "bridge")]
 unsafe extern "C" {
-    #[wasm_bindgen(catch)]
-    fn web_fetch(path: &str) -> Result<JsValue, JsValue>;
+    fn host_fetch(path_ptr: *const u8, path_len: u32, result_len_ptr: *mut u32) -> *const u8;
 }
 
 pub struct ResourceBridge;
 
 impl ResourceBridge {
     pub fn request_file(path: &str) -> Result<Vec<u8>, String> {
-        match web_fetch(path) {
-            Ok(value) => {
-                // Convert JsValue (Uint8Array) to Vec<u8>
-                let arr = Uint8Array::from(value);
-                let data = arr.to_vec();
-                Ok(data)
-            }
-            Err(err) => Err(err
-                .as_string()
-                .unwrap_or_else(|| "Unknown error".to_string())),
+        let bytes = path.as_bytes();
+        let mut result_len: u32 = 0;
+
+        let result_ptr = unsafe { host_fetch(bytes.as_ptr(), bytes.len() as u32, &mut result_len as *mut u32) };
+
+        if result_ptr.is_null() && result_len == 0 {
+            return Err(format!("Host fetch failed for path: {}", path));
         }
+
+        if result_ptr.is_null() {
+            return Err(format!("Host fetch returned null pointer for path: {}", path));
+        }
+
+        let data = unsafe { std::slice::from_raw_parts(result_ptr, result_len as usize) };
+        Ok(data.to_vec())
     }
 }
 
@@ -62,30 +65,36 @@ impl TypstCompiler {
         }
     }
 
-    pub fn add_font(&mut self, data: &[u8]) {
+    pub fn add_font(&mut self, data: &[u8]) -> Result<String, String> {
         let bytes = Bytes::new(data.to_vec());
         if let Some(font) = Font::iter(bytes).next() {
+            let name = font.info().family.clone();
             self.fonts.push(font);
             self.font_book = LazyHash::new(FontBook::from_fonts(&self.fonts));
+            Ok(name)
+        } else {
+            Err("Failed to parse font".to_string())
         }
     }
 
-    pub fn add_source(&mut self, path: &str, text: &str) {
+    pub fn add_source(&mut self, path: &str, text: &str) -> Result<(), String> {
         let id = FileId::new(None, VirtualPath::new(path));
         let source = Source::new(id, text.to_string());
         self.sources
             .write()
-            .expect("Failed to acquire write lock on sources")
+            .map_err(|_| "Failed to acquire write lock on sources".to_string())?
             .insert(id, source);
+        Ok(())
     }
 
-    pub fn add_file(&mut self, path: &str, data: &[u8]) {
+    pub fn add_file(&mut self, path: &str, data: &[u8]) -> Result<(), String> {
         let id = FileId::new(None, VirtualPath::new(path));
         let bytes = Bytes::new(data.to_vec());
         self.files
             .write()
-            .expect("Failed to acquire write lock on files")
+            .map_err(|_| "Failed to acquire write lock on files".to_string())?
             .insert(id, bytes);
+        Ok(())
     }
 
     pub fn set_main(&mut self, path: &str) {
@@ -93,7 +102,11 @@ impl TypstCompiler {
         self.main_id = Some(id);
     }
 
-    pub fn compile(&mut self) -> CompileOutput {
+    pub fn compile(&mut self) -> Result<CompileOutput, String> {
+        if self.main_id.is_none() {
+            return Err("Main file not set".to_string());
+        }
+
         let result = typst::compile(self);
         let diagnostics = format_diagnostics(self, &result);
         let success = result.output.is_ok();
@@ -105,16 +118,78 @@ impl TypstCompiler {
                     success,
                     svg: Some(svg),
                     diagnostics,
+                    internal_error: None,
                 }
             }
             Err(_) => CompileOutput {
                 success,
                 svg: None,
                 diagnostics,
+                internal_error: None,
             },
         };
 
-        output
+        Ok(output)
+    }
+
+    pub fn remove_file(&mut self, path: &str) -> Result<(), String> {
+        let id = FileId::new(None, VirtualPath::new(path));
+        self.sources
+            .write()
+            .map_err(|_| "Failed to acquire write lock on sources".to_string())?
+            .remove(&id);
+        self.files
+            .write()
+            .map_err(|_| "Failed to acquire write lock on files".to_string())?
+            .remove(&id);
+        Ok(())
+    }
+
+    pub fn clear_files(&mut self) -> Result<(), String> {
+        self.sources
+            .write()
+            .map_err(|_| "Failed to acquire write lock on sources".to_string())?
+            .clear();
+        self.files
+            .write()
+            .map_err(|_| "Failed to acquire write lock on files".to_string())?
+            .clear();
+        Ok(())
+    }
+
+    pub fn list_files(&self) -> Result<Vec<String>, String> {
+        let sources = self
+            .sources
+            .read()
+            .map_err(|_| "Failed to acquire read lock on sources".to_string())?;
+        let files = self
+            .files
+            .read()
+            .map_err(|_| "Failed to acquire read lock on files".to_string())?;
+
+        let mut paths: Vec<String> = sources
+            .keys()
+            .chain(files.keys())
+            .filter_map(|id| id.vpath().as_rootless_path().to_str())
+            .map(|s| s.to_string())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    pub fn has_file(&self, path: &str) -> Result<bool, String> {
+        let id = FileId::new(None, VirtualPath::new(path));
+        Ok(self
+            .sources
+            .read()
+            .map_err(|_| "Failed to acquire read lock on sources".to_string())?
+            .contains_key(&id)
+            || self
+                .files
+                .read()
+                .map_err(|_| "Failed to acquire read lock on files".to_string())?
+                .contains_key(&id))
     }
 }
 
@@ -124,6 +199,7 @@ pub struct CompileOutput {
     pub success: bool,
     pub svg: Option<String>,
     pub diagnostics: Vec<WasmDiagnostic>,
+    pub internal_error: Option<String>,
 }
 
 impl World for TypstCompiler {
@@ -144,7 +220,9 @@ impl World for TypstCompiler {
         if let Some(source) = self
             .sources
             .read()
-            .expect("Failed to acquire read lock on sources")
+            .map_err(|_| {
+                FileError::Other(Some(eco_format!("Failed to acquire read lock on sources")))
+            })?
             .get(&id)
         {
             return Ok(source.clone());
@@ -156,7 +234,9 @@ impl World for TypstCompiler {
 
         self.sources
             .write()
-            .expect("Failed to acquire write lock on sources")
+            .map_err(|_| {
+                FileError::Other(Some(eco_format!("Failed to acquire write lock on sources")))
+            })?
             .insert(id, source.clone());
         Ok(source)
     }
@@ -165,7 +245,9 @@ impl World for TypstCompiler {
         if let Some(bytes) = self
             .files
             .read()
-            .expect("Failed to acquire read lock on files")
+            .map_err(|_| {
+                FileError::Other(Some(eco_format!("Failed to acquire read lock on files")))
+            })?
             .get(&id)
         {
             return Ok(bytes.clone());
@@ -188,7 +270,9 @@ impl World for TypstCompiler {
                 let bytes = Bytes::new(data);
                 self.files
                     .write()
-                    .expect("Failed to acquire write lock on files")
+                    .map_err(|_| {
+                        FileError::Other(Some(eco_format!("Failed to acquire write lock on files")))
+                    })?
                     .insert(id, bytes.clone());
                 Ok(bytes)
             }
@@ -249,13 +333,13 @@ impl WasmDiagnostic {
         let mut file = None;
 
         if let Some(span) = diag.span.id() {
-            if let Some(source) = world.source(span).ok() {
-                if let Some(range) = source.range(diag.span) {
-                    start = Some(range.start);
-                    end = Some(range.end);
-                    line = Some(source.byte_to_line(range.start).unwrap_or(0) + 1);
-                    column = Some(source.byte_to_column(range.start).unwrap_or(0) + 1);
-                }
+            if let Some(source) = world.source(span).ok()
+                && let Some(range) = source.range(diag.span)
+            {
+                start = Some(range.start);
+                end = Some(range.end);
+                line = Some(source.byte_to_line(range.start).unwrap_or(0) + 1);
+                column = Some(source.byte_to_column(range.start).unwrap_or(0) + 1);
             }
             file = Some(span.vpath().as_rooted_path().display().to_string());
         }
@@ -272,14 +356,13 @@ impl WasmDiagnostic {
             .iter()
             .filter_map(|t| {
                 let span = t.span;
-                if let Some(file_id) = span.id() {
-                    if let Some(source) = world.source(file_id).ok() {
-                        if let Some(range) = source.range(span) {
-                            let line_num = source.byte_to_line(range.start).unwrap_or(0) + 1;
-                            let file_name = file_id.vpath().as_rooted_path().display().to_string();
-                            return Some(format!("{} ({}:{})", t.v, file_name, line_num));
-                        }
-                    }
+                if let Some(file_id) = span.id()
+                    && let Some(source) = world.source(file_id).ok()
+                    && let Some(range) = source.range(span)
+                {
+                    let line_num = source.byte_to_line(range.start).unwrap_or(0) + 1;
+                    let file_name = file_id.vpath().as_rooted_path().display().to_string();
+                    return Some(format!("{} ({}:{})", t.v, file_name, line_num));
                 }
                 None
             })

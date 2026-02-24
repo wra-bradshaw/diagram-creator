@@ -40,3 +40,23 @@ export class PackageFetchError extends Data.TaggedError("PackageFetchError")<{
 export class FileNotFoundError extends Data.TaggedError("FileNotFoundError")<{
   readonly filePath: string;
 }> {}
+
+export class CacheMissError extends Data.TaggedError("CacheMissError")<{
+  readonly key: string;
+}> {}
+
+export class WorkerError extends Data.TaggedError("WorkerError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export class ListFilesError extends Data.TaggedError("ListFilesError")<{
+  readonly requestId: number;
+  readonly message: string;
+}> {}
+
+export class HasFileError extends Data.TaggedError("HasFileError")<{
+  readonly requestId: number;
+  readonly path: string;
+  readonly message: string;
+}> {}

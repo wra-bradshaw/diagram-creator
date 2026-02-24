@@ -1,3 +1,5 @@
+import type { WasmDiagnostic } from "./wasm/typst_wasm";
+
 const INITIAL_SAB_SIZE = 1024 * 1024; // 1MB
 const MAX_SAB_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const DEFAULT_FETCH_TIMEOUT = 30000; // 30 seconds
@@ -40,9 +42,7 @@ export class SharedMemoryCommunication {
 
     // Validate against maximum size
     if (needed > MAX_SAB_SIZE) {
-      throw new Error(
-        `File too large: ${needed} bytes. Maximum allowed: ${MAX_SAB_SIZE} bytes (4GB).`
-      );
+      throw new Error(`File too large: ${needed} bytes. Maximum allowed: ${MAX_SAB_SIZE} bytes (4GB).`);
     }
 
     if (needed > current) {
@@ -70,15 +70,12 @@ export class SharedMemoryCommunication {
    * @param timeoutMs - Timeout in milliseconds (default: 30000ms)
    * @returns true if status changed, false if timed out
    */
-  waitForStatusChange(
-    expectedStatus: SharedMemoryCommunicationStatus,
-    timeoutMs: number = DEFAULT_FETCH_TIMEOUT
-  ): boolean {
+  waitForStatusChange(expectedStatus: SharedMemoryCommunicationStatus, timeoutMs: number = DEFAULT_FETCH_TIMEOUT): boolean {
     const statusView = new Int32Array(this.statusBuf);
-    
+
     // Atomics.wait returns "ok" | "not-equal" | "timed-out"
     const result = Atomics.wait(statusView, 0, expectedStatus, timeoutMs);
-    
+
     return result === "ok";
   }
 
@@ -90,3 +87,59 @@ export class SharedMemoryCommunication {
     return instantiation;
   }
 }
+
+export interface TypstWorkerProtocol {
+  init: {
+    request: { sharedMemoryCommunication: SharedMemoryCommunication; wasmUrl: string };
+    response: void;
+  };
+  add_file: {
+    request: { path: string; data: Uint8Array };
+    response: void;
+  };
+  add_source: {
+    request: { path: string; text: string };
+    response: void;
+  };
+  add_font: {
+    request: { data: Uint8Array };
+    response: void;
+  };
+  remove_file: {
+    request: { path: string };
+    response: void;
+  };
+  clear_files: {
+    request: void;
+    response: void;
+  };
+  set_main: {
+    request: { path: string };
+    response: void;
+  };
+  compile: {
+    request: void;
+    response: { svg: string; diagnostics: WasmDiagnostic[] };
+  };
+  list_files: {
+    request: void;
+    response: string[];
+  };
+  has_file: {
+    request: { path: string };
+    response: boolean;
+  };
+}
+
+type NoPayload = Record<never, never>;
+
+export type ExcludePayloadIfEmpty<P> = P extends void ? NoPayload : { payload: P };
+
+export type RpcRequestMessage<T> = {
+  [K in keyof T]: {
+    kind: K;
+    requestId: number;
+  } & (T[K] extends { request: infer P } ? ExcludePayloadIfEmpty<P> : NoPayload);
+}[keyof T];
+
+export type RpcResponseMessage<TResult = unknown, TError = unknown> = { requestId: number; result: TResult } | { requestId: number; error: TError };

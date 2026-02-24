@@ -1,124 +1,233 @@
 import { SharedMemoryCommunication, SharedMemoryCommunicationStatus } from "./protocol";
-import { createPostMessage } from "./util.js";
-import type { MainToWorkerMessage } from "./index";
-import init, { TypstCompiler } from "./wasm";
-import type { WasmDiagnostic } from "./wasm";
+import { isMainToWorkerMessage, type MainToWorkerMessage, type WorkerToMainMessage } from "./messages";
+import init, { TypstCompiler, type InitOutput } from "./wasm";
+import { Data, Effect } from "effect";
 
-export type WorkerToMainMessage =
-  | {
-      kind: "compiled";
-      payload: {
-        svg: string;
-        diagnostics: WasmDiagnostic[];
-      };
-    }
-  | {
-      kind: "compile_error";
-      payload: {
-        error: string;
-        diagnostics: WasmDiagnostic[];
-      };
-    }
-  | {
-      kind: "web_fetch";
-      payload: {
-        path: string;
-      };
-    }
-  | {
-      kind: "ready";
-      payload: undefined;
-    };
+export type { MainToWorkerMessage, WorkerToMainMessage } from "./messages";
+
+type WorkerRpcErrorCode = "COMPILER_NOT_INITIALIZED" | "INIT_FAILED" | "COMMAND_FAILED";
+
+type WorkerRpcError = {
+  code: WorkerRpcErrorCode;
+  message: string;
+  cause?: unknown;
+};
+
+type WorkerRpcResponse = Extract<WorkerToMainMessage, { requestId: number }>;
+
+class WorkerCommandError extends Data.TaggedError("WorkerCommandError")<{
+  readonly requestId: number;
+  readonly code: WorkerRpcErrorCode;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 let compiler: TypstCompiler | null = null;
 let sharedMemoryCommunication: SharedMemoryCommunication | null = null;
+let wasmExports: InitOutput | null = null;
 
-const postMessage = createPostMessage<WorkerToMainMessage>();
+const MAX_FETCH_ATTEMPTS = 3;
+const textDecoder = new TextDecoder();
 
-declare global {
-  function web_fetch(path: string): Uint8Array;
-}
+const writeResultLength = (resultLenPtr: number, len: number) => {
+  if (!wasmExports) {
+    throw new Error("WASM exports not initialized");
+  }
 
-globalThis.web_fetch = (path) => {
+  new DataView(wasmExports.memory.buffer).setUint32(resultLenPtr, len, true);
+};
+
+const pathFromWasm = (pathPtr: number, pathLen: number): string => {
+  if (!wasmExports) {
+    throw new Error("WASM exports not initialized");
+  }
+
+  return textDecoder.decode(new Uint8Array(wasmExports.memory.buffer, pathPtr, pathLen));
+};
+
+const copyIntoWasm = (bytes: Uint8Array, resultLenPtr: number): number => {
+  if (!wasmExports) {
+    throw new Error("WASM exports not initialized");
+  }
+
+  const resultPtr = wasmExports.__wbindgen_malloc(bytes.length, 1);
+  new Uint8Array(wasmExports.memory.buffer, resultPtr, bytes.length).set(bytes);
+  writeResultLength(resultLenPtr, bytes.length);
+  return resultPtr;
+};
+
+const hostFetch = (pathPtr: number, pathLen: number, resultLenPtr: number): number => {
   if (!sharedMemoryCommunication) {
     throw new Error("Communication buffer not initialized");
   }
 
-  sharedMemoryCommunication.setStatus(SharedMemoryCommunicationStatus.Pending);
-  postMessage("web_fetch", {
-    path,
-  });
+  const path = pathFromWasm(pathPtr, pathLen);
 
-  const changed = sharedMemoryCommunication.waitForStatusChange(
-    SharedMemoryCommunicationStatus.Pending,
-    30000  // 30 second timeout
-  );
+  for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt += 1) {
+    sharedMemoryCommunication.setStatus(SharedMemoryCommunicationStatus.Pending);
+    self.postMessage({
+      kind: "web_fetch",
+      payload: { path },
+    } as WorkerToMainMessage);
 
-  if (!changed) {
-    throw new Error(`Timeout waiting for fetch response: ${path}`);
+    const changed = sharedMemoryCommunication.waitForStatusChange(SharedMemoryCommunicationStatus.Pending, 30000);
+    if (!changed) {
+      continue;
+    }
+
+    if (sharedMemoryCommunication.getStatus() === SharedMemoryCommunicationStatus.Success) {
+      return copyIntoWasm(sharedMemoryCommunication.getBuffer(), resultLenPtr);
+    }
   }
 
-  const status = sharedMemoryCommunication.getStatus();
-  if (status === SharedMemoryCommunicationStatus.Error) {
-    throw new Error(`Failed to fetch: ${path}`);
-  }
-
-  return sharedMemoryCommunication.getBuffer();
+  writeResultLength(resultLenPtr, 0);
+  return 0;
 };
 
-self.onmessage = async (e: MessageEvent) => {
-  const data = e.data as MainToWorkerMessage;
+const successResponse = (requestId: number, result: unknown): WorkerRpcResponse => ({
+  requestId,
+  result,
+});
 
-  switch (data.kind) {
-    case "init":
-      sharedMemoryCommunication = SharedMemoryCommunication.hydrateObj(data.payload.sharedMemoryCommunication);
-      try {
-        await init({ module_or_path: data.payload.wasmUrl });
-      } catch (err) {
-        console.error("Could not init", err);
-      }
-      compiler = new TypstCompiler();
-      postMessage("ready", undefined);
+const errorResponse = (requestId: number, code: WorkerRpcErrorCode, message: string, cause?: unknown): WorkerRpcResponse => ({
+  requestId,
+  error: { code, message, cause } satisfies WorkerRpcError,
+});
 
-      break;
-    case "compile":
-      if (!compiler) {
-        postMessage("compile_error", { error: "Compiler not initialised", diagnostics: [] });
-        return;
-      }
-      try {
-        compiler.set_main(data.payload.mainPath);
+const ensureCompiler = (requestId: number): Effect.Effect<TypstCompiler, WorkerCommandError> =>
+  compiler
+    ? Effect.succeed(compiler)
+    : Effect.fail(
+        new WorkerCommandError({
+          requestId,
+          code: "COMPILER_NOT_INITIALIZED",
+          message: "Compiler not initialized",
+        }),
+      );
 
-        if (typeof data.payload.files === "object") {
-          for (const [path, fileData] of Object.entries(data.payload.files)) {
-            compiler.add_file(path, fileData);
-          }
-        }
+const runCompilerCommand = <T>(
+  requestId: number,
+  commandName: string,
+  run: (readyCompiler: TypstCompiler) => T,
+): Effect.Effect<T, WorkerCommandError> =>
+  Effect.gen(function* () {
+    const readyCompiler = yield* ensureCompiler(requestId);
+    return yield* Effect.try({
+      try: () => run(readyCompiler),
+      catch: (cause) =>
+        new WorkerCommandError({
+          requestId,
+          code: "COMMAND_FAILED",
+          message: `Worker command failed: ${commandName}`,
+          cause,
+        }),
+    });
+  });
 
-        const result = compiler.compile();
-
-        postMessage("compiled", {
-          svg: result.svg ?? "",
-          diagnostics: result.diagnostics,
-        });
-      } catch (err) {
-        console.error(err);
-        postMessage("compile_error", {
-          error: JSON.stringify(err),
-          diagnostics: [],
-        });
-      }
-      break;
-    case "load_font":
-      if (!compiler) {
-        console.error("[Worker] Cannot load font: Compiler not initialised");
-        return;
-      }
-      try {
-        compiler.add_font(data.payload.data);
-      } catch (err) {
-        console.error("[Worker] Failed to load font:", err);
-      }
-      break;
+self.onmessage = (e: MessageEvent) => {
+  const data = e.data;
+  if (!isMainToWorkerMessage(data)) {
+    return;
   }
+
+  const handleRequest = (request: MainToWorkerMessage): Effect.Effect<WorkerRpcResponse, WorkerCommandError> =>
+    Effect.gen(function* () {
+      switch (request.kind) {
+        case "init": {
+          sharedMemoryCommunication = SharedMemoryCommunication.hydrateObj(request.payload.sharedMemoryCommunication);
+
+          wasmExports = yield* Effect.tryPromise({
+            try: () =>
+              init({
+                module_or_path: request.payload.wasmUrl,
+                imports: {
+                  bridge: {
+                    host_fetch: hostFetch,
+                  },
+                },
+              } as unknown as Parameters<typeof init>[0]),
+            catch: (cause) =>
+              new WorkerCommandError({
+                requestId: request.requestId,
+                code: "INIT_FAILED",
+                message: "Failed to initialize WASM worker",
+                cause,
+              }),
+          });
+
+          compiler = new TypstCompiler();
+          self.postMessage({ kind: "ready" } as WorkerToMainMessage);
+          return successResponse(request.requestId, undefined);
+        }
+        case "add_file":
+          yield* runCompilerCommand(request.requestId, "add_file", (readyCompiler) => {
+            readyCompiler.add_file(request.payload.path, request.payload.data);
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "add_source":
+          yield* runCompilerCommand(request.requestId, "add_source", (readyCompiler) => {
+            readyCompiler.add_source(request.payload.path, request.payload.text);
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "add_font":
+          yield* runCompilerCommand(request.requestId, "add_font", (readyCompiler) => {
+            readyCompiler.add_font(request.payload.data);
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "remove_file":
+          yield* runCompilerCommand(request.requestId, "remove_file", (readyCompiler) => {
+            readyCompiler.remove_file(request.payload.path);
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "clear_files":
+          yield* runCompilerCommand(request.requestId, "clear_files", (readyCompiler) => {
+            readyCompiler.clear_files();
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "set_main":
+          yield* runCompilerCommand(request.requestId, "set_main", (readyCompiler) => {
+            readyCompiler.set_main(request.payload.path);
+            return undefined;
+          });
+          return successResponse(request.requestId, undefined);
+        case "compile":
+          return successResponse(
+            request.requestId,
+            yield* runCompilerCommand(request.requestId, "compile", (readyCompiler) => {
+              const result = readyCompiler.compile();
+              return {
+                svg: result.svg ?? "",
+                diagnostics: result.diagnostics,
+              };
+            }),
+          );
+        case "list_files":
+          return successResponse(
+            request.requestId,
+            yield* runCompilerCommand(request.requestId, "list_files", (readyCompiler) => readyCompiler.list_files()),
+          );
+        case "has_file":
+          return successResponse(
+            request.requestId,
+            yield* runCompilerCommand(request.requestId, "has_file", (readyCompiler) =>
+              readyCompiler.has_file(request.payload.path),
+            ),
+          );
+      }
+    });
+
+  Effect.runFork(
+    handleRequest(data).pipe(
+      Effect.match({
+        onFailure: (error) => errorResponse(error.requestId, error.code, error.message, error.cause),
+        onSuccess: (result) => result,
+      }),
+      Effect.tap((result) => Effect.sync(() => self.postMessage(result as WorkerToMainMessage))),
+    ),
+  );
 };

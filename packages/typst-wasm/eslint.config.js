@@ -71,6 +71,7 @@ export default tseslint.config(
       "scripts/**",
       "test_*.js",
       "**/wasm/*.js",
+      "**/wasm/*.d.ts",
     ],
   }
 );

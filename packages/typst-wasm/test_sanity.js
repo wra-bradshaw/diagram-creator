@@ -1,5 +1,5 @@
-import { defaultFonts, TypstCompilerService, CompileError } from "./dist/index.js";
-import { Effect, Layer } from "effect";
+import { defaultFonts, TypstCompilerService, WorkerBackendLayer } from "./dist/index.js";
+import { Effect } from "effect";
 import fs from "fs";
 
 const wasmUrl = "file:///Users/will/Documents/diagram-creator-tanstack/packages/typst-wasm/dist/typst_wasm_bg.wasm";
@@ -39,20 +39,37 @@ async function run() {
 
     const program = Effect.gen(function* () {
       const compiler = yield* TypstCompilerService;
-      
-      console.log("Waiting for compiler to be ready...");
+
+      // Initialize
+      yield* compiler.init({ wasmUrl });
       yield* compiler.ready;
       console.log("Compiler ready!");
 
-      console.log("Compiling...");
-      const result = yield* compiler.compile({
-        mainPath: "main.typ",
-        files: {
-          "main.typ": new TextEncoder().encode(mainText),
-        },
-      });
+      // Load and add fonts
+      console.log("Loading fonts...");
+      for (const font of defaultFonts) {
+        const data = yield* Effect.tryPromise(() => font.load());
+        yield* compiler.addFont(data);
+      }
+      console.log("Fonts loaded!");
 
-      console.log("Compilation Result:", result);
+      // Add source files
+      console.log("Adding files...");
+      yield* compiler.addSource("main.typ", mainText);
+
+      // Check file state
+      const hasMain = yield* compiler.hasFile("main.typ");
+      console.log("Has main.typ:", hasMain);
+
+      const files = yield* compiler.listFiles;
+      console.log("Files:", files);
+
+      // Set main and compile
+      console.log("Setting main...");
+      yield* compiler.setMain("main.typ");
+
+      console.log("Compiling...");
+      const result = yield* compiler.compile();
 
       if (result.diagnostics && result.diagnostics.length > 0) {
         console.error("Diagnostics:", result.diagnostics);
@@ -60,20 +77,52 @@ async function run() {
 
       if (result.svg) {
         console.log("SVG generated successfully (length: " + result.svg.length + ")");
-        fs.writeFileSync("output.svg", result.svg);
-        console.log("Wrote output.svg");
+        fs.writeFileSync("output1.svg", result.svg);
+        console.log("Wrote output1.svg");
       }
 
-      return result;
+      // Test iterative editing - update and recompile
+      console.log("\n--- Testing iterative editing ---");
+      const updatedText = mainText.replace("Low", "MIN");
+      yield* compiler.addSource("main.typ", updatedText);
+
+      console.log("Recompiling...");
+      const result2 = yield* compiler.compile();
+      if (result2.svg) {
+        console.log("Second SVG (length: " + result2.svg.length + ")");
+        fs.writeFileSync("output2.svg", result2.svg);
+        console.log("Wrote output2.svg");
+      }
+
+      if (result.svg) {
+        console.log("SVG generated successfully (length: " + result.svg.length + ")");
+      }
+
+      // Test clear and new project
+      console.log("\n--- Testing clear and new project ---");
+      yield* compiler.clearFiles;
+
+      const newFiles = yield* compiler.listFiles;
+      console.log("Files after clear:", newFiles);
+
+      yield* compiler.addSource("test.typ", "= Hello World");
+      yield* compiler.setMain("test.typ");
+
+      const result3 = yield* compiler.compile();
+      if (result3.svg) {
+        console.log("New project SVG (length: " + result3.svg.length + ")");
+        fs.writeFileSync("output3.svg", result3.svg);
+        console.log("Wrote output3.svg");
+      }
+
+      return result3;
     });
 
     const result = await Effect.runPromise(
-      program.pipe(
-        Effect.provide(TypstCompilerService.Live({ wasmUrl, fonts: defaultFonts }))
-      )
+      program.pipe(Effect.provide(TypstCompilerService.Default), Effect.provide(WorkerBackendLayer)),
     );
 
-    console.log("Done!");
+    console.log("\nDone!");
   } catch (e) {
     console.error("Error:", e);
     process.exit(1);
