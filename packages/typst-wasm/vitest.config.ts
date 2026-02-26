@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    include: ["**/*.{test,spec}.?(c|m)[jt]s?(x)", "**/*.e2e.?(c|m)[jt]s?(x)"],
     testTimeout: 60000,
   },
 });

@@ -1,14 +1,5 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "declaration": true,
-    "outDir": "./dist",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "types": ["tsdown-plugin-worker/types", "vitest/globals"]
-  },
-  "include": ["src/**/*", "tests/**/*"]
+  "extends": "./tsconfig.base.json",
+  "include": ["src/**/*", "scripts/**/*", "tests/**/*"],
+  "exclude": ["tests/e2e/bun.e2e.ts", "tests/e2e/deno.e2e.ts"]
 }

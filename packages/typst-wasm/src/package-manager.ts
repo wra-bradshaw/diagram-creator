@@ -12,17 +12,14 @@ interface PackageSpec {
 
 const parseSpec = (spec: string): Effect.Effect<PackageSpec, PackageParseError> =>
   Effect.gen(function* () {
-    const match = spec.match(
-      /^@([a-z0-9-]+)\/([a-z0-9_-]+):([0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?)\/(.+)$/
-    );
+    const match = spec.match(/^@([a-z0-9-]+)\/([a-z0-9_-]+):([0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?)\/(.+)$/);
 
     if (!match) {
       return yield* Effect.fail(
         new PackageParseError({
           spec,
-          message:
-            "Expected format: @namespace/name:version/path where namespace is lowercase alphanumeric with hyphens, name is lowercase alphanumeric with hyphens/underscores, version is semver (e.g., 0.4.2), and path is the file path.",
-        })
+          message: "Expected format: @namespace/name:version/path where namespace is lowercase alphanumeric with hyphens, name is lowercase alphanumeric with hyphens/underscores, version is semver (e.g., 0.4.2), and path is the file path.",
+        }),
       );
     }
 
@@ -33,7 +30,7 @@ const parseSpec = (spec: string): Effect.Effect<PackageSpec, PackageParseError> 
         new PackageParseError({
           spec,
           message: `Invalid package namespace: "${namespace}" cannot start or end with hyphen`,
-        })
+        }),
       );
     }
 
@@ -42,21 +39,18 @@ const parseSpec = (spec: string): Effect.Effect<PackageSpec, PackageParseError> 
         new PackageParseError({
           spec,
           message: `Invalid package name: "${name}" cannot start or end with underscore`,
-        })
+        }),
       );
     }
 
     return { namespace, name, version, filePath };
   });
 
-const getCacheKey = (spec: PackageSpec): string =>
-  `@${spec.namespace}/${spec.name}:${spec.version}/${spec.filePath}`;
+const getCacheKey = (spec: PackageSpec): string => `@${spec.namespace}/${spec.name}:${spec.version}/${spec.filePath}`;
 
-const getFileCacheKey = (spec: PackageSpec, filePath: string): string =>
-  `@${spec.namespace}/${spec.name}:${spec.version}/${filePath}`;
+const getFileCacheKey = (spec: PackageSpec, filePath: string): string => `@${spec.namespace}/${spec.name}:${spec.version}/${filePath}`;
 
-const getPackageKey = (spec: PackageSpec): string =>
-  `@${spec.namespace}/${spec.name}:${spec.version}`;
+const getPackageKey = (spec: PackageSpec): string => `@${spec.namespace}/${spec.name}:${spec.version}`;
 
 export type PackageManagerService = {
   readonly getFile: (spec: string) => Effect.Effect<Uint8Array, PackageParseError | PackageFetchError | FileNotFoundError>;
@@ -67,7 +61,7 @@ export class PackageManager extends Effect.Service<PackageManagerService>()("Pac
   effect: Effect.gen(function* () {
     const cache = yield* CacheStorageService;
     const loadedPackages = new Set<string>();
-    
+
     const loadPackage = (spec: PackageSpec): Effect.Effect<void, PackageFetchError> =>
       Effect.gen(function* () {
         const packageKey = getPackageKey(spec);

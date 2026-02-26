@@ -57,7 +57,7 @@ tasks:
 
   # Task 3: Build Rust to WASM (dev mode)
   build-wasm-dev:
-    command: "wasm-pack build --dev --target web --out-dir src/wasm . -- -Z build-std=std,panic_abort"
+    command: "bash scripts/build-wasm.sh dev"
     description: "Build Rust to WASM (development, unoptimized)"
     inputs:
       - "@group(rust-sources)"
@@ -69,7 +69,7 @@ tasks:
 
   # Task 3b: Build Rust to WASM (release mode)
   build-wasm-release:
-    command: "wasm-pack build --release --target web --out-dir src/wasm . -- -Z build-std=std,panic_abort"
+    command: "bash scripts/build-wasm.sh release"
     description: "Build Rust to WASM (release, optimized)"
     inputs:
       - "@group(rust-sources)"
@@ -79,40 +79,13 @@ tasks:
       cache: true
       runInCI: true
 
-  patch-wasm-bindgen:
-    command: "bun run scripts/patch-wasm-bindgen.ts"
-    description: "Patch generated wasm-bindgen JS to accept custom import overrides"
-    deps:
-      - "build-wasm-release"
-    inputs:
-      - "src/wasm/typst_wasm.js"
-      - "scripts/patch-wasm-bindgen.ts"
-    outputs:
-      - "src/wasm/typst_wasm.js"
-    options:
-      cache: true
-
-  patch-wasm-bindgen-dev:
-    command: "bun run scripts/patch-wasm-bindgen.ts"
-    description: "Patch generated wasm-bindgen JS for dev builds"
-    deps:
-      - "build-wasm-dev"
-    inputs:
-      - "src/wasm/typst_wasm.js"
-      - "scripts/patch-wasm-bindgen.ts"
-    outputs:
-      - "src/wasm/typst_wasm.js"
-    options:
-      cache: true
-      runInCI: false
-
   # Task 4: Bundle TypeScript with tsdown
   bundle:
     command: "bunx tsdown"
     description: "Bundle TypeScript with tsdown"
     deps:
       - "generate-font-index"
-      - "patch-wasm-bindgen"
+      - "build-wasm-release"
     inputs:
       - "@group(typescript-sources)"
       - "tsdown.config.ts"
@@ -142,7 +115,7 @@ tasks:
     deps:
       - "fetch-fonts"
       - "generate-font-index"
-      - "patch-wasm-bindgen"
+      - "build-wasm-release"
       - "bundle"
       - "copy-wasm"
     options:
@@ -155,7 +128,7 @@ tasks:
     deps:
       - "fetch-fonts"
       - "generate-font-index"
-      - "patch-wasm-bindgen-dev"
+      - "build-wasm-dev"
     inputs:
       - "src/*"
     options:

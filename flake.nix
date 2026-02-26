@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable"; # Stable Nixpkgs (use 0.1 for unstable)
     fenix = {
-      url = "github:nix-community/fenix";
+      url = "github:nix-community/fenix/monthly";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -55,7 +55,6 @@
               [
                 # Add the flake's formatter to your project's environment
                 self.formatter.${system}
-                nodejs
                 (fenix.combine [
                   (fenix.complete.withComponents [
                     "cargo"
@@ -63,10 +62,13 @@
                     "rust-src"
                     "rustc"
                     "rustfmt"
+                    "llvm-tools-preview"
                   ])
                   fenix.targets.wasm32-unknown-unknown.latest.rust-std
                 ])
+                nodejs_25
                 bun
+                deno
                 wasm-pack
                 wasm-bindgen-cli
                 pkg-config

@@ -5,6 +5,7 @@ import TypstWorker from "./worker.ts?worker";
 import { makeRpcClient, type RpcClient } from "./rpc";
 import { isRpcResponseMessage, type WorkerToMainMessage } from "./messages";
 import { makeFetchBridge } from "./fetch-bridge";
+import type { WasmModuleOrPath } from "./wasm-module";
 import { makeWorkerTransport } from "./worker-transport";
 
 export class WorkerService extends Effect.Service<WorkerService>()("WorkerService", {
@@ -76,7 +77,7 @@ export class WorkerService extends Effect.Service<WorkerService>()("WorkerServic
     return {
       ready: Deferred.await(readyDeferred),
 
-      init: (wasmUrl: string) =>
+      init: (moduleOrPath: WasmModuleOrPath) =>
         Effect.gen(function* () {
           const isDisposed = yield* Ref.get(disposed);
           if (isDisposed) {
@@ -94,7 +95,7 @@ export class WorkerService extends Effect.Service<WorkerService>()("WorkerServic
             requestId: 0,
             payload: {
               sharedMemoryCommunication: fetchBridge.sharedMemoryCommunication,
-              wasmUrl,
+              moduleOrPath,
             },
           });
         }),
@@ -112,7 +113,7 @@ export class WorkerService extends Effect.Service<WorkerService>()("WorkerServic
       listFiles: rpcClient.call("list_files"),
       hasFile: (path: string) => rpcClient.call("has_file", { path }),
       setMain: (path: string) => rpcClient.call("set_main", { path }),
-      compile: rpcClient.call("compile"),
+      compile: () => rpcClient.call("compile"),
     };
   }),
   dependencies: [PackageManager.Default],

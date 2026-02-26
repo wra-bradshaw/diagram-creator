@@ -1,5 +1,6 @@
 import { Data, Deferred, Effect, Ref } from "effect";
 import { PackageManager } from "./package-manager";
+import type { WasmModuleOrPath } from "./wasm-module";
 import init, { TypstCompiler, type InitOutput } from "./wasm";
 import type { WasmDiagnostic } from "./wasm/typst_wasm";
 
@@ -46,10 +47,7 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
     const wasmExportsRef = yield* Ref.make<InitOutput | null>(null);
     const compileRef = yield* Ref.make<((compilerPtr: number) => Promise<[number, number, number]>) | null>(null);
 
-    const ensureCompiler = <T>(
-      run: (compiler: TypstCompiler) => T,
-      name: string,
-    ): Effect.Effect<T, DirectServiceError> =>
+    const ensureCompiler = <T>(run: (compiler: TypstCompiler) => T, name: string): Effect.Effect<T, DirectServiceError> =>
       Effect.gen(function* () {
         const compiler = yield* Ref.get(compilerRef);
         if (!compiler) {
@@ -62,8 +60,7 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
         });
       });
 
-    const pathFromWasm = (wasmExports: InitOutput, pathPtr: number, pathLen: number): string =>
-      textDecoder.decode(new Uint8Array(wasmExports.memory.buffer, pathPtr, pathLen));
+    const pathFromWasm = (wasmExports: InitOutput, pathPtr: number, pathLen: number): string => textDecoder.decode(new Uint8Array(wasmExports.memory.buffer, pathPtr, pathLen));
 
     const writeResultLength = (wasmExports: InitOutput, resultLenPtr: number, len: number) => {
       new DataView(wasmExports.memory.buffer).setUint32(resultLenPtr, len, true);
@@ -106,7 +103,7 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
       }
     };
 
-    const initDirect = (wasmUrl: string) =>
+    const initDirect = (moduleOrPath: WasmModuleOrPath) =>
       Effect.gen(function* () {
         if (!hasJspiSupport()) {
           return yield* Effect.fail(new DirectServiceError({ message: "JSPI is unavailable in this runtime" }));
@@ -120,16 +117,12 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
           try: async () => {
             const suspending = new (
               WebAssembly as unknown as {
-                Suspending: new (fn: (pathPtr: number, pathLen: number, resultLenPtr: number) => Promise<number>) => (
-                  pathPtr: number,
-                  pathLen: number,
-                  resultLenPtr: number,
-                ) => number;
+                Suspending: new (fn: (pathPtr: number, pathLen: number, resultLenPtr: number) => Promise<number>) => (pathPtr: number, pathLen: number, resultLenPtr: number) => number;
               }
             ).Suspending(hostFetch);
 
             const wasmExports = await init({
-              module_or_path: wasmUrl,
+              module_or_path: moduleOrPath,
               imports: {
                 bridge: {
                   host_fetch: suspending,
@@ -139,9 +132,7 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
 
             const promising = (
               WebAssembly as unknown as {
-                promising: (
-                  fn: (compilerPtr: number) => [number, number, number],
-                ) => (compilerPtr: number) => Promise<[number, number, number]>;
+                promising: (fn: (compilerPtr: number) => [number, number, number]) => (compilerPtr: number) => Promise<[number, number, number]>;
               }
             ).promising;
 
@@ -189,37 +180,37 @@ export class DirectService extends Effect.Service<DirectService>()("DirectServic
       dispose,
       addFont: (data: Uint8Array) => ensureCompiler((compiler) => void compiler.add_font(data), "add_font"),
       addFile: (path: string, data: Uint8Array) => ensureCompiler((compiler) => void compiler.add_file(path, data), "add_file"),
-      addSource: (path: string, text: string) =>
-        ensureCompiler((compiler) => void compiler.add_source(path, text), "add_source"),
+      addSource: (path: string, text: string) => ensureCompiler((compiler) => void compiler.add_source(path, text), "add_source"),
       removeFile: (path: string) => ensureCompiler((compiler) => void compiler.remove_file(path), "remove_file"),
       clearFiles: ensureCompiler((compiler) => void compiler.clear_files(), "clear_files"),
       listFiles: ensureCompiler((compiler) => compiler.list_files(), "list_files"),
       hasFile: (path: string) => ensureCompiler((compiler) => compiler.has_file(path), "has_file"),
       setMain: (path: string) => ensureCompiler((compiler) => void compiler.set_main(path), "set_main"),
-      compile: Effect.gen(function* () {
-        const compiler = yield* Ref.get(compilerRef);
-        const wasmExports = yield* Ref.get(wasmExportsRef);
-        const compile = yield* Ref.get(compileRef);
+      compile: () =>
+        Effect.gen(function* () {
+          const compiler = yield* Ref.get(compilerRef);
+          const wasmExports = yield* Ref.get(wasmExportsRef);
+          const compile = yield* Ref.get(compileRef);
 
-        if (!compiler || !wasmExports || !compile) {
-          return yield* Effect.fail(new DirectServiceError({ message: "Compiler not initialized" }));
-        }
+          if (!compiler || !wasmExports || !compile) {
+            return yield* Effect.fail(new DirectServiceError({ message: "Compiler not initialized" }));
+          }
 
-        const ret = yield* Effect.tryPromise({
-          try: () => compile((compiler as unknown as { __wbg_ptr: number }).__wbg_ptr),
-          catch: (cause) => new DirectServiceError({ message: "Direct command failed: compile", cause }),
-        });
+          const ret = yield* Effect.tryPromise({
+            try: () => compile((compiler as unknown as { __wbg_ptr: number }).__wbg_ptr),
+            catch: (cause) => new DirectServiceError({ message: "Direct command failed: compile", cause }),
+          });
 
-        if (ret[2]) {
-          throw takeExternref(wasmExports, ret[1]);
-        }
+          if (ret[2]) {
+            throw takeExternref(wasmExports, ret[1]);
+          }
 
-        const result = takeExternref(wasmExports, ret[0]) as { svg?: string | null; diagnostics: WasmDiagnostic[] };
-        return {
-          svg: result.svg ?? "",
-          diagnostics: result.diagnostics,
-        };
-      }),
+          const result = takeExternref(wasmExports, ret[0]) as { svg?: string | null; diagnostics: WasmDiagnostic[] };
+          return {
+            svg: result.svg ?? "",
+            diagnostics: result.diagnostics,
+          };
+        }),
     };
   }),
   dependencies: [PackageManager.Default],

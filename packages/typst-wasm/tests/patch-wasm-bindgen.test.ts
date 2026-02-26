@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { applyPatch } from "../scripts/patch-wasm-bindgen";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 describe("patch-wasm-bindgen", () => {
   it("applies patch and is idempotent", () => {
-    const wasmPath = resolve(import.meta.dirname, "../src/wasm/typst_wasm.js");
+    const wasmPath = resolve(fileURLToPath(new URL("../src/wasm/typst_wasm.js", import.meta.url)));
     const source = readFileSync(wasmPath, "utf8");
 
     const once = applyPatch(source);

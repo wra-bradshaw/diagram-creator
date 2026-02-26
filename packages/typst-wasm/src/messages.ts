@@ -1,8 +1,4 @@
-import type {
-  RpcRequestMessage,
-  RpcResponseMessage,
-  TypstWorkerProtocol,
-} from "./protocol";
+import type { RpcRequestMessage, RpcResponseMessage, TypstWorkerProtocol } from "./protocol";
 
 export type MainToWorkerMessage = RpcRequestMessage<TypstWorkerProtocol>;
 
@@ -19,8 +15,7 @@ export type WorkerEventMessage =
 
 export type WorkerToMainMessage = RpcResponseMessage | WorkerEventMessage;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 export const isMainToWorkerMessage = (value: unknown): value is MainToWorkerMessage => {
   if (!isRecord(value)) return false;
@@ -53,5 +48,4 @@ export const isWorkerEventMessage = (value: unknown): value is WorkerEventMessag
   return false;
 };
 
-export const isWorkerToMainMessage = (value: unknown): value is WorkerToMainMessage =>
-  isRpcResponseMessage(value) || isWorkerEventMessage(value);
+export const isWorkerToMainMessage = (value: unknown): value is WorkerToMainMessage => isRpcResponseMessage(value) || isWorkerEventMessage(value);

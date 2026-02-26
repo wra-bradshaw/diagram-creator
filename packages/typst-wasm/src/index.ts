@@ -1,7 +1,8 @@
 import { Deferred, Effect } from "effect";
 import type { CompileError, ListFilesError, HasFileError } from "./errors";
 import type { WasmDiagnostic } from "./wasm/typst_wasm";
-import { CompilerBackend } from "./compiler-backend";
+import type { WasmModuleOrPath } from "./wasm-module";
+import { AutomaticBackendLayer, CompilerBackend } from "./compiler-backend";
 
 export interface CompileResult {
   svg?: string;
@@ -10,7 +11,7 @@ export interface CompileResult {
 }
 
 export interface TypstCompilerOptions {
-  wasmUrl: string;
+  moduleOrPath: WasmModuleOrPath;
   debug?: boolean;
   memoryPackageCacheCapacity?: number;
 }
@@ -32,13 +33,14 @@ export type TypstCompilerServiceType = {
 
 export { SharedMemoryCommunication } from "./protocol";
 export type { MainToWorkerMessage, WorkerToMainMessage } from "./messages";
+export type { WasmModuleOrPath } from "./wasm-module";
 export * from "./fonts/index";
 export * from "./errors";
 export { PackageManager } from "./package-manager";
 export { CacheStorageService } from "./cache-abstraction";
 export { WorkerService } from "./worker-service";
 export { DirectService } from "./direct-service";
-export { CompilerBackend, WorkerBackendLayer, JspiBackendLayer } from "./compiler-backend";
+export { CompilerBackend, WorkerBackendLayer, JspiBackendLayer, AutomaticBackendLayer, supportsWorkerBackend, supportsJspiBackend, selectAutomaticBackendKind } from "./compiler-backend";
 
 export class TypstCompilerService extends Effect.Service<TypstCompilerServiceType>()("TypstCompilerService", {
   accessors: true,
@@ -51,7 +53,7 @@ export class TypstCompilerService extends Effect.Service<TypstCompilerServiceTyp
 
       init: (options: TypstCompilerOptions) =>
         Effect.gen(function* () {
-          yield* backend.init(options.wasmUrl);
+          yield* backend.init(options.moduleOrPath);
           yield* backend.ready;
           yield* Deferred.succeed(readyDeferred, undefined);
         }),
@@ -68,4 +70,5 @@ export class TypstCompilerService extends Effect.Service<TypstCompilerServiceTyp
       compile: backend.compile,
     };
   }),
+  dependencies: [AutomaticBackendLayer],
 }) {}

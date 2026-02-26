@@ -24,14 +24,23 @@ impl ResourceBridge {
         let bytes = path.as_bytes();
         let mut result_len: u32 = 0;
 
-        let result_ptr = unsafe { host_fetch(bytes.as_ptr(), bytes.len() as u32, &mut result_len as *mut u32) };
+        let result_ptr = unsafe {
+            host_fetch(
+                bytes.as_ptr(),
+                bytes.len() as u32,
+                &mut result_len as *mut u32,
+            )
+        };
 
         if result_ptr.is_null() && result_len == 0 {
             return Err(format!("Host fetch failed for path: {}", path));
         }
 
         if result_ptr.is_null() {
-            return Err(format!("Host fetch returned null pointer for path: {}", path));
+            return Err(format!(
+                "Host fetch returned null pointer for path: {}",
+                path
+            ));
         }
 
         let data = unsafe { std::slice::from_raw_parts(result_ptr, result_len as usize) };

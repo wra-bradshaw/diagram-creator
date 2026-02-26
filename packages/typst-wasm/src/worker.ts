@@ -105,11 +105,7 @@ const ensureCompiler = (requestId: number): Effect.Effect<TypstCompiler, WorkerC
         }),
       );
 
-const runCompilerCommand = <T>(
-  requestId: number,
-  commandName: string,
-  run: (readyCompiler: TypstCompiler) => T,
-): Effect.Effect<T, WorkerCommandError> =>
+const runCompilerCommand = <T>(requestId: number, commandName: string, run: (readyCompiler: TypstCompiler) => T): Effect.Effect<T, WorkerCommandError> =>
   Effect.gen(function* () {
     const readyCompiler = yield* ensureCompiler(requestId);
     return yield* Effect.try({
@@ -139,7 +135,7 @@ self.onmessage = (e: MessageEvent) => {
           wasmExports = yield* Effect.tryPromise({
             try: () =>
               init({
-                module_or_path: request.payload.wasmUrl,
+                module_or_path: request.payload.moduleOrPath,
                 imports: {
                   bridge: {
                     host_fetch: hostFetch,
@@ -207,17 +203,9 @@ self.onmessage = (e: MessageEvent) => {
             }),
           );
         case "list_files":
-          return successResponse(
-            request.requestId,
-            yield* runCompilerCommand(request.requestId, "list_files", (readyCompiler) => readyCompiler.list_files()),
-          );
+          return successResponse(request.requestId, yield* runCompilerCommand(request.requestId, "list_files", (readyCompiler) => readyCompiler.list_files()));
         case "has_file":
-          return successResponse(
-            request.requestId,
-            yield* runCompilerCommand(request.requestId, "has_file", (readyCompiler) =>
-              readyCompiler.has_file(request.payload.path),
-            ),
-          );
+          return successResponse(request.requestId, yield* runCompilerCommand(request.requestId, "has_file", (readyCompiler) => readyCompiler.has_file(request.payload.path)));
       }
     });
 

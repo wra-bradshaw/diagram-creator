@@ -11,9 +11,7 @@ export type WorkerTransport = {
   readonly post: (message: unknown) => void;
 };
 
-export const makeWorkerTransport = (
-  worker: WorkerLike,
-): Effect.Effect<WorkerTransport> =>
+export const makeWorkerTransport = (worker: WorkerLike): Effect.Effect<WorkerTransport> =>
   Effect.gen(function* () {
     const incoming = yield* Queue.bounded<WorkerToMainMessage>(64);
 

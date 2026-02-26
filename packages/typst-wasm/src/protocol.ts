@@ -1,4 +1,5 @@
 import type { WasmDiagnostic } from "./wasm/typst_wasm";
+import type { WasmModuleOrPath } from "./wasm-module";
 
 const INITIAL_SAB_SIZE = 1024 * 1024; // 1MB
 const MAX_SAB_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
@@ -90,7 +91,7 @@ export class SharedMemoryCommunication {
 
 export interface TypstWorkerProtocol {
   init: {
-    request: { sharedMemoryCommunication: SharedMemoryCommunication; wasmUrl: string };
+    request: { sharedMemoryCommunication: SharedMemoryCommunication; moduleOrPath: WasmModuleOrPath };
     response: void;
   };
   add_file: {

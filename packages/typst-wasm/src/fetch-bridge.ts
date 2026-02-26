@@ -1,9 +1,6 @@
 import { Effect, Ref } from "effect";
 import { FetchError } from "./errors";
-import {
-  SharedMemoryCommunication,
-  SharedMemoryCommunicationStatus,
-} from "./protocol";
+import { SharedMemoryCommunication, SharedMemoryCommunicationStatus } from "./protocol";
 
 type PackageFileLoader = {
   readonly getFile: (spec: string) => Effect.Effect<Uint8Array, unknown>;
@@ -14,10 +11,7 @@ export type FetchBridge = {
   readonly handleFetchRequest: (path: string) => Effect.Effect<void>;
 };
 
-export const makeFetchBridge = (
-  packageLoader: PackageFileLoader,
-  disposed: Ref.Ref<boolean>,
-): FetchBridge => {
+export const makeFetchBridge = (packageLoader: PackageFileLoader, disposed: Ref.Ref<boolean>): FetchBridge => {
   const sharedMemoryCommunication = new SharedMemoryCommunication();
 
   const handleFetchRequest = (path: string) =>
