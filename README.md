@@ -1,4 +1,4 @@
-# diagram-creator-tanstack
+# diagram-creator
 
 Work in progress.
 
